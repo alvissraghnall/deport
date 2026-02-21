@@ -1,0 +1,8 @@
+[package]
+name = "deported"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+process-man = { version = "0.1.0", path = "process-man" }
+tokio = "1.49.0"
