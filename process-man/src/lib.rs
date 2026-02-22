@@ -1,7 +1,25 @@
 use std::net::{Ipv4Addr, TcpListener};
 use std::process::Stdio;
+use tokio::sync::oneshot::channel;
+use tokio::io::AsyncReadExt as _;
 
 const DEFAULT_PROXY_PORT: u16 = 1999;
+
+struct Process {
+    name: String,
+    child: tokio::process::Child,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    state: ProcessState,
+    pid: u32,
+}
+
+enum ProcessState {
+    Running,
+    Exited,
+    Failed,
+    Stopped,
+}
 
 fn get_default_proxy_port() -> u16 {
     let port_str = std::env::var("PROXY_PORT").unwrap_or_else(|_| DEFAULT_PROXY_PORT.to_string());
@@ -42,16 +60,55 @@ fn find_free_port() -> Option<u16> {
     None
 }
 
-pub fn spawn(command: &str, args: &[String], port: u16) -> tokio::process::Child {
-    let child = tokio::process::Command::new(command)
+pub async fn spawn(command: &str, args: &[String], port: u16) -> Process {
+    let (_tx, rx) = channel::<()>();
+    let mut child = tokio::process::Command::new(command)
         .args(args) 
         .env("PORT", port.to_string()) 
         .stdout(Stdio::piped()) 
         .stderr(Stdio::piped()) 
+        .stdin(Stdio::null())
         .spawn()
-        .expect("Failed to spawn child process");
+        .expect("Failed to spawn child process. Enter a valid command and arguments.");
 
-    child
+    let mut stdout = child.stdout.take().expect("stdout is not captured");
+    let mut stderr = child.stderr.take().expect("stderr is not captured");
+
+    let read_stdout = tokio::spawn(async move {
+        let mut buff = Vec::new();
+        let _ = stdout.read_to_end(&mut buff).await;
+
+        buff
+    });
+
+    let read_stderr = tokio::spawn(async move {
+        let mut buff = Vec::new();
+        let _ = stderr.read_to_end(&mut buff).await;
+
+        buff
+    });
+
+    
+
+    tokio::select! {
+        _ = child.wait() => {}
+        _ = rx => { child.kill().await.expect("kill failed") },
+    }
+
+    let stdout = read_stdout.await.unwrap();
+    let stderr = read_stderr.await.unwrap();
+
+    assert!(stderr.is_empty(), "Expected stderr to be empty, got: {}", String::from_utf8_lossy(&stderr));
+
+    let process = Process {
+        name: format!("{} {}", command, args[0]),
+        pid: child.id().unwrap_or(0),
+        child,
+        stdout: stdout,
+        stderr,
+        state: ProcessState::Running,
+    };
+    process
 }
 
 #[cfg(test)]
@@ -61,33 +118,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_spawn_and_capture() {
-        let args = vec!["6".to_string()];
+        let args = vec!["7".to_string()];
 
-        let mut child = spawn("sleep", &args, 1999);
+        let mut process = spawn("sleep", &args, 1999).await;
+        println!("Process PID: {}, child pid: {}", process.pid, process.child.id().unwrap_or(0));
 
-        // Verify we can capture stderr and stdout handles
-        // Since 'sleep' is quiet, stderr will be empty, but the handle must exist.
-        let mut stderr = child.stderr.take().expect("Failed to capture stderr");
-        let mut stdout = child.stdout.take().expect("Failed to capture stdout");
-
-        let status = child.wait().await.expect("Failed to wait for child");
+        let status = process.child.wait().await.expect("Failed to wait for child");
         
         assert!(status.success(), "Process did not exit successfully");
 
-        // Verify we can read from the pipes (even if empty)
-        let mut out_str = String::new();
-        let mut err_str = String::new();
-
-        let mut stdout_reader = BufReader::new(&mut stdout).lines();
-        while let Some(line) = stdout_reader.next_line().await.unwrap() {
-            out_str.push_str(&line);
-        }
-
-        let mut stderr_reader = BufReader::new(&mut stderr).lines();
-        while let Some(line) = stderr_reader.next_line().await.unwrap() {
-            err_str.push_str(&line);
-        }
-
-        println!("Exit: {:?}, Out: '{}', Err: '{}'", status, out_str, err_str);
+        println!("Exit: {:?}, Out: '{}', Err: '{}'", status, unsafe { String::from_utf8_unchecked(process.stdout) }, unsafe { String::from_utf8_unchecked(process.stderr) });
     }
 }
