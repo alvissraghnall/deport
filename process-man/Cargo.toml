@@ -1,7 +1,0 @@
-[package]
-name = "process-man"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-tokio = { version = "1.49.0", features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }

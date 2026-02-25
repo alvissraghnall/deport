@@ -4,5 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-process-man = { version = "0.1.0", path = "process-man" }
-tokio = "1.49.0"
+nix = { version = "0.31.1", features = ["process", "signal"] }
+# process-man = { version = "0.1.0", path = "process-man" }
+tokio = { version = "1.49.0", features = ["process", "rt", "macros", "io-util", "sync", "net", "time", "signal"] }
+tracing = "0.1.44"
