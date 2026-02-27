@@ -10,6 +10,9 @@ use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::{Mutex, mpsc, watch};
 use tokio::task::JoinHandle;
 
+const DEFAULT_PROXY_PORT: u16 = 1999;
+
+
 const STATE_RUNNING: u8 = 0;
 const STATE_EXITED: u8 = 1;
 const STATE_FAILED: u8 = 2;
@@ -349,12 +352,38 @@ impl Process {
     }
 }
 
+
+pub fn get_default_proxy_port() -> u16 {
+    let port_str = std::env::var("PROXY_PORT").unwrap_or_else(|_| DEFAULT_PROXY_PORT.to_string());
+    let port = port_str.parse().unwrap_or(DEFAULT_PROXY_PORT);
+    // Validate port range (system ports 0-1023 are usually restricted)
+    if port < 1024 || port >= 65535 {
+        eprintln!(
+            "Invalid proxy port: {}. Using default: {}",
+            port, DEFAULT_PROXY_PORT
+        );
+        return DEFAULT_PROXY_PORT;
+    }
+    port
+}
+
 fn find_free_port() -> Option<u16> {
     use std::net::{Ipv4Addr, TcpListener};
-    (1024..=65535).find_map(|port| {
-        TcpListener::bind((Ipv4Addr::LOCALHOST, port))
-            .is_ok()
-            .then_some(port)
+    fn try_bind_port(port: u16) -> bool {
+        TcpListener::bind((Ipv4Addr::LOCALHOST, port)).is_ok()
+    }
+    
+    // Try a sparse check first ( 1024, 1124, 1224...)
+    for i in 0..60 {
+        let port = 1024 + (i * 100);
+        if try_bind_port(port) {
+            return Some(port);
+        }
+    }
+    
+    // ...or, exhaustive check if the sparse check fails, but skip the default proxy port to avoid conflicts.
+    (1024..=65535).filter(|port| *port != get_default_proxy_port()).find_map(|port| {
+        try_bind_port(port).then_some(port)
     })
 }
 

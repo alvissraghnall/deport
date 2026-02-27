@@ -4,8 +4,8 @@ use tokio::sync::RwLock;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Route {
-    port: u16,
-    pid: u32,
+    pub port: u16,
+    pub pid: u32,
 }
 
 type Hostname = String;
@@ -13,6 +13,7 @@ type Routes = HashMap<Hostname, Route>;
 
 type Data = Arc<RwLock<Routes>>;
 
+#[derive(Clone)]
 pub struct RouteManager {
     data: Data,
 }

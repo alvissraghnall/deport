@@ -5,6 +5,15 @@ edition = "2024"
 
 [dependencies]
 nix = { version = "0.31.1", features = ["process", "signal"] }
+rama = { version = "0.2.0", features = ["full"] }
 # process-man = { version = "0.1.0", path = "process-man" }
 tokio = { version = "1.49.0", features = ["process", "rt", "macros", "io-util", "sync", "net", "time", "signal"] }
 tracing = "0.1.44"
+
+[[bin]]
+name = "deported"
+path = "src/main.rs"
+
+# [[bin]]
+# name = "deported-proxy"
+# path = "src/proxy.rs"
