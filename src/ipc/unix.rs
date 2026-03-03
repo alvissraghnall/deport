@@ -1,5 +1,5 @@
-use tokio::net::{UnixListener, UnixStream};
 use std::io;
+use tokio::net::{UnixListener, UnixStream};
 
 pub struct IpcListener {
     inner: UnixListener,

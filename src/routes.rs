@@ -55,7 +55,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn tryout () {
+    async fn tryout() {
         let manager = RouteManager::new();
 
         let route1 = Route {
@@ -73,8 +73,13 @@ mod tests {
 
         // Retrieve a route
         if let Some(route) = manager.get(&"localhost".to_string()).await {
-            
-            assert_eq!(route, Route { port: 8080, pid: 1234 });
+            assert_eq!(
+                route,
+                Route {
+                    port: 8080,
+                    pid: 1234
+                }
+            );
             println!("Route for localhost: {:?}", route);
         }
 
@@ -91,6 +96,12 @@ mod tests {
             Err(err) => println!("Error: {}", err),
         }
 
-        assert!(manager.get(&"localhost".to_string()).await.unwrap() == Route { port: 8081, pid: 9999 });
+        assert!(
+            manager.get(&"localhost".to_string()).await.unwrap()
+                == Route {
+                    port: 8081,
+                    pid: 9999
+                }
+        );
     }
 }

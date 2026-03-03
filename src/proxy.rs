@@ -2,30 +2,49 @@ use std::{convert::Infallible, sync::Arc, time::Duration};
 
 use crate::{process_man::get_default_proxy_port, routes::RouteManager};
 use rama::{
-    Context, Layer as _, Service, context::RequestContextExt, graceful::ShutdownGuard, http::{
-        self, Request, Response, StatusCode, client::EasyHttpWebClient, core::service, layer::{remove_header::{RemoveRequestHeaderLayer, RemoveResponseHeaderLayer}, trace::TraceLayer, upgrade::UpgradeLayer}, matcher::MethodMatcher, server::HttpServer, service::web::response::IntoResponse as _
-    }, layer::ConsumeErrLayer, net::{
-        http::RequestContext, stream::ClientSocketInfo, tls::server::SelfSignedData
-    }, rt::Executor, service::service_fn, tcp::{client::service::Forwarder, server::TcpListener}, tls::rustls::server::{TlsAcceptorDataBuilder, TlsAcceptorLayer}
+    Context, Layer as _, Service,
+    context::RequestContextExt,
+    graceful::ShutdownGuard,
+    http::{
+        self, Request, Response, StatusCode,
+        client::EasyHttpWebClient,
+        layer::{
+            remove_header::{RemoveRequestHeaderLayer, RemoveResponseHeaderLayer},
+            trace::TraceLayer,
+            upgrade::UpgradeLayer,
+        },
+        matcher::MethodMatcher,
+        server::HttpServer,
+        service::web::response::IntoResponse as _,
+    },
+    layer::ConsumeErrLayer,
+    net::{http::RequestContext, stream::ClientSocketInfo, tls::server::SelfSignedData},
+    rt::Executor,
+    service::service_fn,
+    tcp::{client::service::Forwarder, server::TcpListener},
+    tls::{boring::core::x509::X509Ref, rustls::server::{TlsAcceptorDataBuilder, TlsAcceptorLayer}},
 };
 
 async fn tls_term(guard: ShutdownGuard, route_manager: RouteManager) {
     let executor = Executor::graceful(guard);
     let client = Arc::new(EasyHttpWebClient::default());
 
-    let http_core = service_fn(move |req| internal_http_service(req, route_manager.clone(), client.clone()));
+    let http_core =
+        service_fn(move |req| internal_http_service(req, route_manager.clone(), client.clone()));
 
-    let http_stack = HttpServer::auto(executor)
-    .service((
-        TraceLayer::new_for_http(),
-        UpgradeLayer::new(
-            MethodMatcher::CONNECT,
-            service_fn(http_connect_accept::<()>),
-            ConsumeErrLayer::default().into_layer(Forwarder::ctx()),
-        ),
-        RemoveResponseHeaderLayer::hop_by_hop(),
-        RemoveRequestHeaderLayer::hop_by_hop(),
-    ).into_layer(http_core));
+    let http_stack = HttpServer::auto(executor).service(
+        (
+            TraceLayer::new_for_http(),
+            UpgradeLayer::new(
+                MethodMatcher::CONNECT,
+                service_fn(http_connect_accept::<()>),
+                ConsumeErrLayer::default().into_layer(Forwarder::ctx()),
+            ),
+            RemoveResponseHeaderLayer::hop_by_hop(),
+            RemoveRequestHeaderLayer::hop_by_hop(),
+        )
+            .into_layer(http_core),
+    );
 
     let acceptor_data = TlsAcceptorDataBuilder::new_self_signed(SelfSignedData::default())
         .expect("tls acceptor with self signed data")
@@ -44,7 +63,10 @@ async fn tls_term(guard: ShutdownGuard, route_manager: RouteManager) {
     )
         .into_layer(http_stack);
 
-    println!("Starting TLS termination proxy on port {}... ", get_default_proxy_port());
+    println!(
+        "Starting TLS termination proxy on port {}... ",
+        get_default_proxy_port()
+    );
     TcpListener::bind(format!("127.0.0.1:{}", get_default_proxy_port()))
         .await
         .expect("bind TCP Listener: http")
@@ -117,10 +139,11 @@ async fn internal_http_service(
 
     *req.uri_mut() = new_uri.parse().unwrap_or_else(|_| {
         tracing::error!("Failed to parse new URI: {}", new_uri);
-        req.uri().clone() // fallback to original URI on error
+        req.uri().clone()
     });
 
-    req.headers_mut().insert("x-forwarded-for", ip.parse().unwrap());
+    req.headers_mut()
+        .insert("x-forwarded-for", ip.parse().unwrap());
 
     let ctx = Context::default();
     let response = match client.serve(ctx, req).await {
@@ -141,7 +164,7 @@ pub(crate) async fn start_proxy(route_manager: RouteManager) {
     let shutdown = rama::graceful::Shutdown::default();
 
     shutdown.spawn_task_fn(async move |guard: ShutdownGuard| {
-        tls_term(guard.clone(), route_manager).await;
+        tls_term(guard, route_manager).await;
     });
 
     shutdown

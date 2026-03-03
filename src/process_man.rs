@@ -12,7 +12,6 @@ use tokio::task::JoinHandle;
 
 const DEFAULT_PROXY_PORT: u16 = 1999;
 
-
 const STATE_RUNNING: u8 = 0;
 const STATE_EXITED: u8 = 1;
 const STATE_FAILED: u8 = 2;
@@ -352,7 +351,6 @@ impl Process {
     }
 }
 
-
 pub fn get_default_proxy_port() -> u16 {
     let port_str = std::env::var("PROXY_PORT").unwrap_or_else(|_| DEFAULT_PROXY_PORT.to_string());
     let port = port_str.parse().unwrap_or(DEFAULT_PROXY_PORT);
@@ -372,7 +370,7 @@ fn find_free_port() -> Option<u16> {
     fn try_bind_port(port: u16) -> bool {
         TcpListener::bind((Ipv4Addr::LOCALHOST, port)).is_ok()
     }
-    
+
     // Try a sparse check first ( 1024, 1124, 1224...)
     for i in 0..60 {
         let port = 1024 + (i * 100);
@@ -380,11 +378,11 @@ fn find_free_port() -> Option<u16> {
             return Some(port);
         }
     }
-    
+
     // ...or, exhaustive check if the sparse check fails, but skip the default proxy port to avoid conflicts.
-    (1024..=65535).filter(|port| *port != get_default_proxy_port()).find_map(|port| {
-        try_bind_port(port).then_some(port)
-    })
+    (1024..=65535)
+        .filter(|port| *port != get_default_proxy_port())
+        .find_map(|port| try_bind_port(port).then_some(port))
 }
 
 #[cfg(test)]
