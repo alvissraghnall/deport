@@ -2,7 +2,7 @@ use directories::ProjectDirs;
 use std::fs;
 use std::path::PathBuf;
 
-fn app_data_dir() -> PathBuf {
+pub(super) fn app_data_dir() -> PathBuf {
     let proj_dirs = ProjectDirs::from("you", "got", "deported")
         .expect("Could not determine project directories");
 
@@ -14,11 +14,20 @@ pub(crate) fn init_app_storage() -> std::io::Result<()> {
 
     fs::create_dir_all(&dir)?;
 
-    let cert_path = dir.join("ca-cert.pem");
-    let key_path = dir.join("ca-key.pem");
+    let cert_path = dir.join("ca.crt");
+    let key_path = dir.join("ca.key");
 
     println!("Cert: {:?}", cert_path);
     println!("Key: {:?}", key_path);
 
     Ok(())
 }
+
+// Ransom, Boldy James, Nicholas Craven - Salvation For The Wicked
+// Ras Kass - Leopard Eats Face
+// Herc Cut The Lights - SSG'98
+// Sasha Keable - Act II
+// Chris Crack - Too Late To Start Following The Rules Now
+// Jill Scott - To Whom This May Concern
+// Boldy James, Nicholas Craven - Manhunt
+// 

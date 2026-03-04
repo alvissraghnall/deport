@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.102"
+arc-swap = "1.8.2"
 directories = "6.0.0"
 nix = { version = "0.31.1", features = ["fs", "process", "signal", "user"] }
 openssl = "0.10.75"

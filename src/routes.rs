@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use arc_swap::ArcSwap;
 use tokio::sync::RwLock;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -11,9 +12,8 @@ pub struct Route {
 type Hostname = String;
 type Routes = HashMap<Hostname, Route>;
 
-type Data = Arc<RwLock<Routes>>;
+type Data = ArcSwap<Routes>;
 
-#[derive(Clone)]
 pub struct RouteManager {
     data: Data,
 }
@@ -21,7 +21,7 @@ pub struct RouteManager {
 impl RouteManager {
     pub fn new() -> Self {
         RouteManager {
-            data: Arc::new(RwLock::new(HashMap::new())),
+            data: ArcSwap::from_pointee(HashMap::new()),
         }
     }
 

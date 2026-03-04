@@ -1,10 +1,10 @@
-use rama::tcp::server::TcpListener;
-
-use crate::state::init_app_storage;
+use crate::{sni::load_ca, state::{app_data_dir, init_app_storage}};
 
 mod process_man;
 
 mod routes;
+
+mod sni;
 
 mod proxy;
 
@@ -16,12 +16,16 @@ mod trust_ca;
 
 mod state;
 
+static ROUTES_MANAGER = Lazy routes::RouteManager::new();
+
+
 #[tokio::main]
 async fn main() {
-    println!("Hello, world!");
-    let route_manager = routes::RouteManager::new();
-    init_app_storage().unwrap();
+    let state_dir = app_data_dir();
+    let (ca_cert, ca_key) = load_ca(&state_dir).expect("CA Certificates should be installed!");
     
+    println!("Hello, world!");
+    init_app_storage().unwrap();
 
     route_manager
         .insert(
@@ -33,11 +37,9 @@ async fn main() {
         )
         .await;
 
-    // Start the TLS termination proxy in the background
     tokio::spawn(async {
-        proxy::start_proxy(route_manager).await;
+        proxy::start_proxy(route_manager, ca_cert, ca_key).await;
     })
     .await
     .unwrap();
-    
 }

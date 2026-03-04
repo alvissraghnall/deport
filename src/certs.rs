@@ -1,9 +1,8 @@
 use std::{
-    os::unix::fs::PermissionsExt as _,
-    time::{Duration, SystemTime},
+    os::unix::fs::PermissionsExt as _, sync::Arc, time::{Duration, SystemTime}
 };
 
-use rama::tls::boring::core::{
+use rama::{error::OpaqueError, tls::{boring::core::{
     asn1::{Asn1Integer, Asn1Time, Asn1TimeRef},
     bn::{BigNum, MsbOption},
     error::ErrorStack,
@@ -15,7 +14,7 @@ use rama::tls::boring::core::{
         X509, X509NameBuilder, X509Ref, X509Req, X509ReqBuilder, X509VerifyResult,
         extension::{self, SubjectKeyIdentifier},
     },
-};
+}, rustls::dep::{pki_types::{CertificateDer, PrivateKeyDer}, rustls::{crypto::aws_lc_rs, sign::CertifiedKey}}}};
 
 const CA_KEY_FILE: &str = "ca-key.pem";
 const CA_CERT_FILE: &str = "ca.pem";
@@ -46,7 +45,7 @@ fn is_cert_expired(cert: &X509Ref) -> bool {
     true
 }
 
-fn generate_ca_cert(key_path: &str, cert_path: &str) -> Result<(X509, PKey<Private>), ErrorStack> {
+pub fn generate_ca_cert() -> Result<(X509, PKey<Private>), ErrorStack> {
     let ca_key = Rsa::generate(2048)?;
     let mut ca_cert = X509::builder()?;
     ca_cert.set_version(2)?;
@@ -332,10 +331,35 @@ pub(crate) fn generate_cert_for_host(
     let hname_str = hostname.to_string();
     let mut hosts: Vec<String> = vec![hname_str];
 
-    if let Some((sub, rest)) = hostname.split_once('.') {
-        let wildcard = format!("*.{}", rest);
-        hosts.push(wildcard);
+    if let Some((_, rest)) = hostname.split_once('.') {
+        if let Some(_) = rest.split_once('.') {
+            let wildcard = format!("*.{}", rest);
+            hosts.push(wildcard);
+        }
     }
 
     generate_server_cert(ca_cert, ca_key, hosts)
+}
+
+
+pub fn bridge_boring_to_rustls(
+    cert: &X509,
+    key: &PKey<Private>,
+) -> Result<CertifiedKey, OpaqueError> {
+    let cert_der = cert.to_der().map_err(|e| OpaqueError::from_std(e))?;
+    let key_der = key.private_key_to_der().map_err(|e| OpaqueError::from_std(e))?;
+
+    let cert_chain = vec![CertificateDer::from(cert_der)];
+    
+    let private_key = PrivateKeyDer::try_from(key_der)
+        .map_err(|e| OpaqueError::from_display(format!("key conversion error: {}", e)))?;
+
+    let provider = Arc::new(aws_lc_rs::default_provider());
+    
+    let signing_key = provider
+        .key_provider
+        .load_private_key(private_key)
+        .map_err(|e| OpaqueError::from_display(format!("load key error: {}", e)))?;
+
+    Ok(CertifiedKey::new(cert_chain, signing_key))
 }

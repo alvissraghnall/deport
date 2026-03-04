@@ -1,6 +1,6 @@
 use std::{convert::Infallible, sync::Arc, time::Duration};
 
-use crate::{process_man::get_default_proxy_port, routes::RouteManager};
+use crate::{process_man::get_default_proxy_port, routes::RouteManager, sni::AsyncTlsIssuerService};
 use rama::{
     Context, Layer as _, Service,
     context::RequestContextExt,
@@ -22,11 +22,11 @@ use rama::{
     rt::Executor,
     service::service_fn,
     tcp::{client::service::Forwarder, server::TcpListener},
-    tls::{boring::core::x509::X509Ref, rustls::server::{TlsAcceptorDataBuilder, TlsAcceptorLayer}},
+    tls::{boring::core::{pkey::{Private, PKey}, x509::X509}, rustls::server::{TlsAcceptorDataBuilder, TlsAcceptorLayer}},
 };
 
-async fn tls_term(guard: ShutdownGuard, route_manager: RouteManager) {
-    let executor = Executor::graceful(guard);
+async fn tls_term(guard: ShutdownGuard, route_manager: RouteManager, ca_cert: X509, ca_key: PKey<Private>) {
+    let executor = Executor::graceful(guard.clone());
     let client = Arc::new(EasyHttpWebClient::default());
 
     let http_core =
@@ -56,12 +56,13 @@ async fn tls_term(guard: ShutdownGuard, route_manager: RouteManager) {
     // let http_service = HttpServer::auto(executor).service(service_fn(move |req| {
     //     internal_http_service(req, route_manager.clone(), client.clone())
     // }));
+    let tls_service = AsyncTlsIssuerService::new(http_stack, ca_cert, ca_key);
 
     let tcp_service = (
         ConsumeErrLayer::default(),
         TlsAcceptorLayer::new(acceptor_data),
     )
-        .into_layer(http_stack);
+        .into_layer(tls_service);
 
     println!(
         "Starting TLS termination proxy on port {}... ",
@@ -70,7 +71,7 @@ async fn tls_term(guard: ShutdownGuard, route_manager: RouteManager) {
     TcpListener::bind(format!("127.0.0.1:{}", get_default_proxy_port()))
         .await
         .expect("bind TCP Listener: http")
-        .serve(tcp_service)
+        .serve_graceful(guard, tcp_service)
         .await;
 }
 
@@ -160,11 +161,11 @@ async fn internal_http_service(
     Ok(response)
 }
 
-pub(crate) async fn start_proxy(route_manager: RouteManager) {
+pub(crate) async fn start_proxy(route_manager: RouteManager, ca_cert: X509, ca_key: PKey<Private>) {
     let shutdown = rama::graceful::Shutdown::default();
 
     shutdown.spawn_task_fn(async move |guard: ShutdownGuard| {
-        tls_term(guard, route_manager).await;
+        tls_term(guard, route_manager, ca_cert, ca_key).await;
     });
 
     shutdown
