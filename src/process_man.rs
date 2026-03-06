@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::signal::unix::{SignalKind, signal};
@@ -27,7 +28,7 @@ pub struct ProcessConfig {
     pub cwd: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProcessInfo {
     pub pid: u32,
     pub name: String,
@@ -36,7 +37,7 @@ pub struct ProcessInfo {
     pub exit_code: Option<i32>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum ProcessState {
     Running,
     Exited,
@@ -78,15 +79,13 @@ impl Process {
     /// Spawns a new process with the given configuration.
     /// This function returns immediately after the fork.
     pub async fn spawn(mut config: ProcessConfig) -> io::Result<Self> {
-        // 1. Resolve Port
         let port = match config.port {
             Some(p) => p,
-            None => find_free_port().ok_or_else(|| {
+            None => get_free_port().ok_or_else(|| {
                 io::Error::new(io::ErrorKind::AddrInUse, "No free ports available")
             })?,
         };
 
-        // 2. Prepare Command
         let mut cmd = Command::new(&config.command);
         cmd.args(&config.args)
             .env("PORT", port.to_string())
@@ -94,13 +93,13 @@ impl Process {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .stdin(Stdio::null())
-            .kill_on_drop(true); // Safety net
+            .kill_on_drop(true);
 
         if let Some(cwd) = &config.cwd {
             cmd.current_dir(cwd);
         }
 
-        // This ensures that grandchildren (e.g. npm +++ node) are also killed.
+        // ensures that grandchildren (e.g. npm +++ node) are also killed.
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt as _;
@@ -116,7 +115,6 @@ impl Process {
 
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<SupervisorCommand>(1);
 
-        // 5. Spawn the Supervisor Task
         let supervisor = Self::start_supervisor(
             child,
             pid,
@@ -229,6 +227,8 @@ impl Process {
     pub fn is_running(&self) -> bool {
         self.state.load(Ordering::Acquire) == STATE_RUNNING
     }
+
+    pub fn list_
 
     pub fn get_state(&self) -> ProcessState {
         match self.state.load(Ordering::Acquire) {
@@ -354,7 +354,7 @@ impl Process {
 pub fn get_default_proxy_port() -> u16 {
     let port_str = std::env::var("PROXY_PORT").unwrap_or_else(|_| DEFAULT_PROXY_PORT.to_string());
     let port = port_str.parse().unwrap_or(DEFAULT_PROXY_PORT);
-    // Validate port range (system ports 0-1023 are usually restricted)
+    // Validate port range (system ports 0-1023 are restricted)
     if port < 1024 || port >= 65535 {
         eprintln!(
             "Invalid proxy port: {}. Using default: {}",
@@ -365,24 +365,15 @@ pub fn get_default_proxy_port() -> u16 {
     port
 }
 
-fn find_free_port() -> Option<u16> {
+fn get_free_port() -> Option<u16> {
     use std::net::{Ipv4Addr, TcpListener};
-    fn try_bind_port(port: u16) -> bool {
-        TcpListener::bind((Ipv4Addr::LOCALHOST, port)).is_ok()
-    }
-
-    // Try a sparse check first ( 1024, 1124, 1224...)
-    for i in 0..60 {
-        let port = 1024 + (i * 100);
-        if try_bind_port(port) {
-            return Some(port);
+    if let Ok(listener) = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)) {
+        if let Ok(addr) = listener.local_addr() {
+            return Some(addr.port());
         }
-    }
-
-    // ...or, exhaustive check if the sparse check fails, but skip the default proxy port to avoid conflicts.
-    (1024..=65535)
-        .filter(|port| *port != get_default_proxy_port())
-        .find_map(|port| try_bind_port(port).then_some(port))
+        return None
+    };
+    return None
 }
 
 #[cfg(test)]

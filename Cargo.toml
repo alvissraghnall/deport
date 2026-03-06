@@ -6,11 +6,15 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.102"
 arc-swap = "1.8.2"
+bincode = "3.0.0"
+dashmap = "6.1.0"
 directories = "6.0.0"
+mio = { version = "1.1.1", features = ["os-poll"] }
 nix = { version = "0.31.1", features = ["fs", "process", "signal", "user"] }
 openssl = "0.10.75"
 openssl-sys = "0.9.111"
 rama = { version = "0.2.0", features = ["full"] }
+serde = { version = "1.0.228", features = ["derive"] }
 # process-man = { version = "0.1.0", path = "process-man" }
 tokio = { version = "1.49.0", features = ["process", "rt", "macros", "io-util", "sync", "net", "time", "signal"] }
 tracing = "0.1.44"

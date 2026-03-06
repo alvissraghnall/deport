@@ -1,6 +1,6 @@
 use std::{convert::Infallible, sync::Arc, time::Duration};
 
-use crate::{process_man::get_default_proxy_port, routes::RouteManager, sni::AsyncTlsIssuerService};
+use crate::{process_man::get_default_proxy_port, routes::RouteManager, sni::AsyncTlsIssuerService, state::SharedState};
 use rama::{
     Context, Layer as _, Service,
     context::RequestContextExt,
@@ -25,12 +25,21 @@ use rama::{
     tls::{boring::core::{pkey::{Private, PKey}, x509::X509}, rustls::server::{TlsAcceptorDataBuilder, TlsAcceptorLayer}},
 };
 
-async fn tls_term(guard: ShutdownGuard, route_manager: RouteManager, ca_cert: X509, ca_key: PKey<Private>) {
+async fn tls_term(guard: ShutdownGuard, state: SharedState) {
     let executor = Executor::graceful(guard.clone());
     let client = Arc::new(EasyHttpWebClient::default());
 
+    let state_cl = state.clone();
+    
     let http_core =
-        service_fn(move |req| internal_http_service(req, route_manager.clone(), client.clone()));
+        service_fn(move |req| {
+            let routes = state.routes.clone();
+            internal_http_service(
+                req, 
+                routes, 
+                client.clone())
+        }
+        );
 
     let http_stack = HttpServer::auto(executor).service(
         (
@@ -56,7 +65,7 @@ async fn tls_term(guard: ShutdownGuard, route_manager: RouteManager, ca_cert: X5
     // let http_service = HttpServer::auto(executor).service(service_fn(move |req| {
     //     internal_http_service(req, route_manager.clone(), client.clone())
     // }));
-    let tls_service = AsyncTlsIssuerService::new(http_stack, ca_cert, ca_key);
+    let tls_service = AsyncTlsIssuerService::new(http_stack, state_cl);
 
     let tcp_service = (
         ConsumeErrLayer::default(),
@@ -95,7 +104,7 @@ where
 
 async fn internal_http_service(
     mut req: rama::http::Request,
-    state: RouteManager,
+    state: Arc<RouteManager>,
     client: Arc<EasyHttpWebClient>,
 ) -> Result<rama::http::Response, Infallible> {
     let host = req
@@ -106,7 +115,7 @@ async fn internal_http_service(
     tracing::info!("Received request for host: {}", host);
 
     let port = {
-        let map = state.get(&host.to_owned()).await;
+        let map = state.get(&host.to_owned());
         match map {
             Some(route) => route.port,
             None => {
@@ -161,11 +170,14 @@ async fn internal_http_service(
     Ok(response)
 }
 
-pub(crate) async fn start_proxy(route_manager: RouteManager, ca_cert: X509, ca_key: PKey<Private>) {
+pub(crate) async fn start_proxy(state: SharedState) {
     let shutdown = rama::graceful::Shutdown::default();
 
-    shutdown.spawn_task_fn(async move |guard: ShutdownGuard| {
-        tls_term(guard, route_manager, ca_cert, ca_key).await;
+    shutdown.spawn_task_fn({
+        let state = state.clone();
+        async move |guard: ShutdownGuard| {
+            tls_term(guard, state).await;
+        }
     });
 
     shutdown

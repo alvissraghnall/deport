@@ -1,6 +1,24 @@
+use dashmap::DashMap;
 use directories::ProjectDirs;
+use rama::tls::boring::core::pkey::{PKey, Private};
+use rama::tls::boring::core::x509::X509;
+use rama::tls::rustls::dep::rustls::ServerConfig;
+use tokio::sync::OnceCell;
 use std::fs;
 use std::path::PathBuf;
+
+use std::sync::{Arc};
+
+use crate::routes::RouteManager;
+
+pub(crate) struct ProxyState {
+    pub routes: Arc<RouteManager>,
+    pub ca_cert: X509,
+    pub ca_key: PKey<Private>,
+    pub tls_cache: DashMap<String, Arc<OnceCell<ServerConfig>>>
+}
+
+pub(crate) type SharedState = Arc<ProxyState>;
 
 pub(super) fn app_data_dir() -> PathBuf {
     let proj_dirs = ProjectDirs::from("you", "got", "deported")

@@ -1,51 +1,46 @@
-use std::collections::HashMap;
 use std::sync::Arc;
-use arc_swap::ArcSwap;
-use tokio::sync::RwLock;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+use dashmap::DashMap;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Route {
     pub port: u16,
     pub pid: u32,
 }
 
-type Hostname = String;
-type Routes = HashMap<Hostname, Route>;
-
-type Data = ArcSwap<Routes>;
+// type Hostname = String;
+type Hostname = Arc<str>;
 
 pub struct RouteManager {
-    data: Data,
+    routes: DashMap<Hostname, Route>,
 }
 
 impl RouteManager {
     pub fn new() -> Self {
-        RouteManager {
-            data: ArcSwap::from_pointee(HashMap::new()),
+        Self {
+            routes: DashMap::new(),
         }
     }
 
-    // Insert a new route or update an existing one
-    pub async fn insert(&self, hostname: Hostname, route: Route) {
-        let mut data = self.data.write().await;
-        data.insert(hostname, route);
+    pub fn insert(&self, hostname: Hostname, route: Route) {
+        self.routes.insert(hostname, route);
     }
 
-    // Get a route by hostname, returning an owned value
-    pub async fn get(&self, hostname: &Hostname) -> Option<Route> {
-        let data = self.data.read().await; // shared lock for reading
-        data.get(hostname).cloned() // return an owned value
+    pub fn get(&self, hostname: &str) -> Option<Route> {
+        self.routes.get(hostname).map(|r| r.clone())
     }
 
-    // Update a route and return the updated route (or a default in case of error)
-    pub async fn update(&self, hostname: &Hostname, route: Route) -> Result<Route, &'static str> {
-        let mut data = self.data.write().await;
-        if let Some(existing_route) = data.get_mut(hostname) {
-            *existing_route = route;
-            Ok(existing_route.clone())
+    pub fn update(&self, hostname: &str, route: Route) -> Result<(), &'static str> {
+        if let Some(mut existing) = self.routes.get_mut(hostname) {
+            *existing = route;
+            Ok(())
         } else {
             Err("Hostname not found")
         }
+    }
+
+    pub fn remove(&self, hostname: &str) {
+        self.routes.remove(hostname);
     }
 }
 
@@ -67,12 +62,10 @@ mod tests {
             pid: 5678,
         };
 
-        // Insert routes
-        manager.insert("localhost".to_string(), route1).await;
-        manager.insert("example.com".to_string(), route2).await;
+        manager.insert(Arc::from("localhost"), route1);
+        manager.insert("example.com".into(), route2);
 
-        // Retrieve a route
-        if let Some(route) = manager.get(&"localhost".to_string()).await {
+        if let Some(route) = manager.get(&"localhost".to_string()) {
             assert_eq!(
                 route,
                 Route {
@@ -83,21 +76,19 @@ mod tests {
             println!("Route for localhost: {:?}", route);
         }
 
-        // Update a route
         let updated_route = Route {
             port: 8081,
             pid: 9999,
         };
         match manager
             .update(&"localhost".to_string(), updated_route)
-            .await
         {
             Ok(route) => println!("Updated route: {:?}", route),
             Err(err) => println!("Error: {}", err),
         }
 
         assert!(
-            manager.get(&"localhost".to_string()).await.unwrap()
+            manager.get(&"localhost".to_string()).unwrap()
                 == Route {
                     port: 8081,
                     pid: 9999

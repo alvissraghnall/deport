@@ -1,14 +1,7 @@
 use anyhow::Result;
 use rama::{
-    Context, Layer, Service,
+    Context, Service,
     error::OpaqueError,
-    graceful::Shutdown,
-    http::{Request, Response, server::HttpServer, service::web::response::IntoResponse},
-    layer::ConsumeErrLayer,
-    net::{address::Domain},
-    rt::Executor,
-    service::service_fn,
-    tcp::server::TcpListener,
     tls::{
         boring::core::{
             pkey::{PKey, Private},
@@ -21,15 +14,15 @@ use rama::{
                 crypto::aws_lc_rs::default_provider,
                 server::{Acceptor, TlsStream},
             },
-            tokio_rustls::{LazyConfigAcceptor, server},
+            tokio_rustls::{LazyConfigAcceptor,},
         },
     },
 };
 use std::{collections::HashMap, fmt, fs, path::PathBuf};
-use std::{convert::Infallible, sync::Arc, time::Duration};
-use tokio::sync::{Mutex, RwLock};
+use std::{sync::Arc,};
+use tokio::sync::{Mutex, OnceCell, RwLock};
 
-use crate::certs::{generate_ca_cert, generate_cert_for_host};
+use crate::{certs::{generate_ca_cert, generate_cert_for_host}, state::ProxyState};
 
 pub fn generate_cert_for_host_rustls(
     ca_cert: &X509,
@@ -55,9 +48,7 @@ pub struct AsyncTlsIssuerService<S> {
     inner: S,
     // Cache: Domain -> Mutex<Option<Arc<ServerConfig>>>
     // Mutex ensures we only generate once per domain even under concurrency
-    cache: Arc<RwLock<HashMap<String, Arc<Mutex<Option<Arc<ServerConfig>>>>>>>,
-    ca_cert: X509,
-    ca_key: PKey<Private>,
+    state: Arc<ProxyState>
 }
 
 impl<S, State, IO> Service<State, IO> for AsyncTlsIssuerService<S>
@@ -101,71 +92,91 @@ where
 }
 
 impl <S> AsyncTlsIssuerService<S> {
-    pub fn new(inner: S, ca_cert: X509, ca_key: PKey<Private>) -> Self {
+    pub fn new(inner: S, state: Arc<ProxyState>) -> Self {
         Self {
             inner,
-            cache: Default::default(),
-            ca_cert,
-            ca_key,
+            state,
         }
     }
 
     async fn resolve_config(&self, domain: &str) -> Result<Arc<ServerConfig>, OpaqueError> {
-        let entry_arc = {
-            let read = self.cache.read().await;
-            read.get(domain).cloned()
-        };
 
-        let entry = match entry_arc {
-            Some(arc) => arc,
-            None => {
-                let mut write = self.cache.write().await;
-                write
-                    .entry(domain.to_string())
-                    .or_insert_with(|| Arc::new(Mutex::new(None)))
-                    .clone()
-            }
-        };
+        let cell = self.state
+            .tls_cache
+            .entry(domain.to_string())
+            .or_insert_with(|| Arc::new(OnceCell::new()))
+            .clone();
 
-        let mut guard = entry.lock().await;
+        let config = cell
+            .get_or_try_init(|| async {
+                let cfg = generate_cert_config(
+                    domain,
+                    &self.state.ca_cert,
+                    &self.state.ca_key,
+                )?;
+    
+                Ok::<_, OpaqueError>(cfg)
+            })
+            .await?;
 
-        if let Some(cfg) = &*guard {
-            return Ok(cfg.clone());
-        }
+        Ok(Arc::new(config.clone()))
 
-        tracing::info!("Generating cert for {}", domain);
+        // let entry = match entry_arc {
+        //     Some(arc) => arc,
+        //     None => {
+        //         let mut write = self.cache.write().await;
+        //         write
+        //             .entry(domain.to_string())
+        //             .or_insert_with(|| Arc::new(Mutex::new(None)))
+        //             .clone()
+        //     }
+        // };
 
-        let (cert_chain, key) = generate_cert_for_host_rustls(&self.ca_cert, &self.ca_key, domain)?;
+        // let mut guard = entry.lock().await;
 
-        let provider = Arc::new(default_provider());
-        let builder = ServerConfig::builder_with_provider(provider)
-            .with_safe_default_protocol_versions()
-            .map_err(|e| OpaqueError::from_display(format!("protocol versions error: {}", e)))?
-            .with_no_client_auth()
-            .with_single_cert(cert_chain, key)
-            .map_err(|e| OpaqueError::from_display(format!("invalid cert/key: {}", e)))?;
+        // if let Some(cfg) = &*guard {
+        //     return Ok(cfg.clone());
+        // }
 
-        let config = Arc::new(builder);
+        // tracing::info!("Generating cert for {}", domain);
 
-        *guard = Some(config.clone());
+        // let (cert_chain, key) = generate_cert_for_host_rustls(&self.ca_cert, &self.ca_key, domain)?;
 
-        Ok(config)
+        // let provider = Arc::new(default_provider());
+
+        // *guard = Some(config.clone());
+
+        // Ok(config)
     }
+}
+
+fn generate_cert_config (domain: &str, ca_cert: &X509, ca_key: &PKey<Private>) -> Result<ServerConfig, OpaqueError> {
+    let (cert_chain, key) = generate_cert_for_host_rustls(&ca_cert, &ca_key, domain)?;
+    let provider = Arc::new(default_provider());
+    
+    let builder = ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|e| OpaqueError::from_display(format!("protocol versions error: {}", e)))?
+        .with_no_client_auth()
+        .with_single_cert(cert_chain, key)
+        .map_err(|e| OpaqueError::from_display(format!("invalid cert/key: {}", e)))?;
+
+    Ok(builder)
 }
 
 pub fn load_ca(state_dir: &PathBuf) -> Result<(X509, PKey<Private>), Box<dyn std::error::Error>> {
     let cert_path = state_dir.join("ca.crt");
     let key_path = state_dir.join("ca.key");
-    
+
     let cert_exists = cert_path.exists();
     let key_exists = key_path.exists();
 
     if !cert_exists || !key_exists {
         let (cert, key) = generate_ca_cert()?;
-        
+
         fs::write(state_dir.join("ca.crt"), cert.to_pem()?)?;
         fs::write(state_dir.join("ca.key"), key.private_key_to_pem_pkcs8()?)?;
-        
+
         return Ok((cert, key));
     }
 

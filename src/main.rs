@@ -1,4 +1,9 @@
-use crate::{sni::load_ca, state::{app_data_dir, init_app_storage}};
+use std::{ops::Deref, sync::{Arc, LazyLock, OnceLock}};
+
+use dashmap::DashMap;
+use rama::proxy::Proxy;
+
+use crate::{routes::RouteManager, sni::load_ca, state::{ProxyState, SharedState, app_data_dir, init_app_storage}};
 
 mod process_man;
 
@@ -16,29 +21,40 @@ mod trust_ca;
 
 mod state;
 
-static ROUTES_MANAGER = Lazy routes::RouteManager::new();
+static ROUTES_MANAGER: LazyLock<Arc<RouteManager>> = LazyLock::new(|| Arc::new(routes::RouteManager::new()));
 
+static APP_STATE: LazyLock<Arc<ProxyState>> = LazyLock::new(|| {
+    let state_dir = app_data_dir();
+    let (ca_cert, ca_key) = load_ca(&state_dir).expect("CA Certificates should be installed!");
+
+    Arc::new(ProxyState {
+        routes: Arc::from(RouteManager::new()),
+        tls_cache: DashMap::new(),
+        ca_cert,
+        ca_key,
+    })
+});
 
 #[tokio::main]
 async fn main() {
     let state_dir = app_data_dir();
-    let (ca_cert, ca_key) = load_ca(&state_dir).expect("CA Certificates should be installed!");
     
     println!("Hello, world!");
     init_app_storage().unwrap();
-
-    route_manager
+    let state = APP_STATE.clone();
+    
+    state.routes
         .insert(
-            "localhost".to_string(),
+            "localhost".into(),
             routes::Route {
                 port: 8000,
                 pid: 1234,
             },
-        )
-        .await;
+        );
+    
 
     tokio::spawn(async {
-        proxy::start_proxy(route_manager, ca_cert, ca_key).await;
+        proxy::start_proxy(state).await;
     })
     .await
     .unwrap();
