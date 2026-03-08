@@ -28,9 +28,5 @@ impl IpcListenerTrait for IpcListener {
         Ok(server)
     }
 
-    async fn handle_new_messages(&mut self) -> io::Result<()> {
-        // would need to handle each connection in a separate task as windows doesn't support poll-esquw
-        Ok(())
-    }
 }
 

@@ -2,8 +2,9 @@ use std::{ops::Deref, sync::{Arc, LazyLock, OnceLock}};
 
 use dashmap::DashMap;
 use rama::proxy::Proxy;
+use tokio::sync::mpsc;
 
-use crate::{routes::RouteManager, sni::load_ca, state::{ProxyState, SharedState, app_data_dir, init_app_storage}};
+use crate::{ipc::worker::{WorkItem, worker_loop}, process_man::ProcessManager, routes::RouteManager, sni::load_ca, state::{ProxyState, SharedState, app_data_dir, init_app_storage}};
 
 mod process_man;
 
@@ -35,13 +36,16 @@ static APP_STATE: LazyLock<Arc<ProxyState>> = LazyLock::new(|| {
     })
 });
 
+static PROCESS_MANAGER: LazyLock<Arc<ProcessManager>> = LazyLock::new(|| Arc::new(ProcessManager::new()));
+
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     let state_dir = app_data_dir();
     
     println!("Hello, world!");
     init_app_storage().unwrap();
     let state = APP_STATE.clone();
+    let process_manager = PROCESS_MANAGER.clone();
     
     state.routes
         .insert(
@@ -56,6 +60,13 @@ async fn main() {
     tokio::spawn(async {
         proxy::start_proxy(state).await;
     })
-    .await
-    .unwrap();
+    .await?;
+
+    let (tx, rx) = mpsc::channel::<WorkItem>(100);
+
+    tokio::spawn(worker_loop(rx, process_manager));
+
+    ipc::run(tx).await?;
+
+    Ok(())
 }

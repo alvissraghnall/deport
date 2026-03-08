@@ -4,7 +4,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
+use dashmap::DashMap;
+use futures::future::join_all;
+use rkyv::{Archive, Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::signal::unix::{SignalKind, signal};
@@ -18,7 +20,62 @@ const STATE_EXITED: u8 = 1;
 const STATE_FAILED: u8 = 2;
 const STATE_STOPPED: u8 = 3;
 
-#[derive(Debug, Clone)]
+pub struct ProcessManager {
+    processes: DashMap<String, Process>,
+}
+
+impl ProcessManager {
+    pub fn new() -> Self {
+        Self {
+            processes: DashMap::new(),
+        }
+    }
+
+    pub async fn spawn(&self, config: ProcessConfig) -> io::Result<ProcessInfo> {
+        let process = Process::spawn(config).await?;
+
+        let process_name = process.name.as_str();
+        let info = process.info().await;
+
+        self.processes.insert(process_name.to_string(), process);
+
+        Ok(info)
+    }
+
+    pub async fn list(&self) -> Vec<ProcessInfo> {
+        let mut infos = Vec::with_capacity(self.processes.len());
+
+        for val in &self.processes {
+            let process = val.value();
+            infos.push(process.info().await);
+        }
+
+        infos
+    }
+
+    pub async fn kill(&self, process_name: String) -> io::Result<()> {
+        let proc = self
+            .processes
+            .get(process_name.as_str())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Process not found!"))?;
+
+        proc.kill().await
+    }
+
+    pub async fn cleanup(&self) {
+        self.processes.retain(|_, proc| proc.is_running());
+    }
+
+    pub async fn stop_all(&self) {
+        self.processes.iter().map(async |proc| {
+            proc.value().kill().await;
+        });
+    }
+}
+
+pub type SharedManager = Arc<ProcessManager>;
+
+#[derive(Debug, Clone, Archive, Serialize, Deserialize, )]
 pub struct ProcessConfig {
     pub name: String,
     pub command: String,
@@ -28,7 +85,7 @@ pub struct ProcessConfig {
     pub cwd: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Archive)]
 pub struct ProcessInfo {
     pub pid: u32,
     pub name: String,
@@ -37,7 +94,7 @@ pub struct ProcessInfo {
     pub exit_code: Option<i32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Archive)]
 pub enum ProcessState {
     Running,
     Exited,
@@ -46,7 +103,7 @@ pub enum ProcessState {
 }
 
 /// A handle to a managed process.
-/// This struct is thread-safe and clonable.
+/// This struct is thread-safe.
 #[derive(Clone)]
 pub struct Process {
     pub pid: u32,
@@ -228,8 +285,6 @@ impl Process {
         self.state.load(Ordering::Acquire) == STATE_RUNNING
     }
 
-    pub fn list_
-
     pub fn get_state(&self) -> ProcessState {
         match self.state.load(Ordering::Acquire) {
             STATE_RUNNING => ProcessState::Running,
@@ -371,9 +426,9 @@ fn get_free_port() -> Option<u16> {
         if let Ok(addr) = listener.local_addr() {
             return Some(addr.port());
         }
-        return None
+        return None;
     };
-    return None
+    return None;
 }
 
 #[cfg(test)]

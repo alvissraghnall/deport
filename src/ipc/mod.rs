@@ -4,16 +4,26 @@ mod windows;
 #[cfg(target_family = "unix")]
 mod unix;
 
-use serde::{Deserialize, Serialize};
+use std::{io, sync::Arc};
+
+use rkyv::{Archive, Deserialize, Serialize, from_bytes, rancor, to_bytes};
 #[cfg(target_os = "windows")]
 pub use windows::*;
 
 #[cfg(target_family = "unix")]
 pub use unix::*;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+pub mod worker;
 
-use crate::process_man::{Process, ProcessConfig, ProcessInfo};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    sync::{mpsc::{self, Sender}, oneshot},
+};
+
+use crate::{
+    ipc::worker::WorkItem,
+    process_man::{Process, ProcessConfig, ProcessInfo, ProcessManager},
+};
 
 trait IpcListenerTrait {
     async fn bind(addr: &str) -> std::io::Result<Self>
@@ -21,11 +31,55 @@ trait IpcListenerTrait {
         Self: Sized;
 
     async fn accept(&self) -> std::io::Result<IpcStream>;
-
-    async fn handle_new_messages(&mut self) -> std::io::Result<()>;
 }
 
-async fn run() -> std::io::Result<()> {
+#[derive(Debug, Serialize, Deserialize, Archive)]
+pub(crate) enum Request {
+    Spawn { config: ProcessConfig },
+    List,
+    Stop { name: String },
+    KillDaemon,
+}
+
+#[derive(Debug, Serialize, Deserialize, Archive)]
+pub(crate) enum Response {
+    List { processes: Vec<ProcessInfo> },
+    ProcessInfo(ProcessInfo),
+    Error { message: String },
+    Ok { message: String },
+}
+
+impl Request {
+    pub async fn process(self, process_man: Arc<ProcessManager>) -> Response {
+        match self {
+            Request::Spawn { config } => match process_man.spawn(config).await {
+                Ok(info) => Response::ProcessInfo(info),
+                Err(e) => Response::Error {
+                    message: e.to_string(),
+                },
+            },
+            Request::List => Response::List {
+                processes: (process_man.list().await),
+            },
+            Request::Stop { name } => match process_man.kill(name).await {
+                Ok(()) => Response::Ok {
+                    message: "Process stopped successfully".into(),
+                },
+                Err(e) => Response::Error {
+                    message: e.to_string(),
+                },
+            },
+            Request::KillDaemon => {
+                process_man.stop_all().await;
+                Response::Ok {
+                    message: "Daemon killed successfully".into(),
+                }
+            }
+        }
+    }
+}
+
+pub async fn run(tx: mpsc::Sender<WorkItem>) -> std::io::Result<()> {
     #[cfg(unix)]
     let addr = "/tmp/mydaemon.sock";
 
@@ -35,103 +89,52 @@ async fn run() -> std::io::Result<()> {
     let listener = IpcListener::bind(addr).await?;
 
     loop {
-        let mut stream = listener.accept().await?;
+        let mut stream: IpcStream = listener.accept().await?;
+
+        let tx = tx.clone();
 
         tokio::spawn(async move {
-            let mut buf = [0u8; 1024];
-
-            loop {
-                let n = match stream.read(&mut buf).await {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => n,
-                };
-
-                let _ = stream.write_all(&buf[..n]).await;
+            if let Err(e) = handle_client(&mut stream, tx).await {
+                eprintln!("Connection error: {}", e);
             }
         });
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) enum Request {
-    Spawn {
-        name: String,
-        command: String,
-        args: Vec<String>,
-        port: Option<u16>,
-        env: Vec<(String, String)>,
-        cwd: Option<String>,
-    },
-    List,
-    Stop {
-        name: String,
-    },
-    KillDaemon,
-}
+async fn handle_client<T>(mut stream: T, tx: Sender<WorkItem>) -> io::Result<()>
+where
+    T: AsyncReadExt + AsyncWriteExt + Unpin,
+{
+    let mut buf = [0u8; 1024];
 
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) enum Response {
-    List { processes: Vec<ProcessInfo> },
-    ProcessInfo(Process),
-    Error { message: String },
-    Ok { message: String },
-}
+    loop {
+        let msg_len = match stream.read_u32().await {
+            Ok(0) => return Ok(()),
+            Ok(n) => n as usize,
+            Err(e) => return Err(e),
+        };
 
-impl Request {
-    pub fn from_json(json: &str) -> serde_json::Result<Self> {
-        serde_json::from_str(json)
-    }
+        let mut buf = vec![0u8; msg_len];
+        stream.read_exact(&mut buf).await?;
 
-    pub fn to_json(&self) -> serde_json::Result<String> {
-        serde_json::to_string(self)
-    }
+        let request = from_bytes::<Request, rancor::Error>(&buf)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-    pub async fn process(self) -> Response {
-        match self {
-            Request::Spawn {
-                name,
-                command,
-                args,
-                port,
-                env,
-                cwd,
-            } => {
-                let config = ProcessConfig {
-                    name,
-                    command,
-                    args,
-                    port,
-                    env: vec![],
-                    cwd: None,
-                };
-                
-                match Process::spawn(config).await {
-                    Ok(info) => Response::ProcessInfo(info),
-                    Err(e) => Response::Error {
-                        message: e.to_string(),
-                    },
-                }
-            }
-            Request::List => match crate::process_man::list_processes().await {
-                Ok(processes) => Response::List { processes },
-                Err(e) => Response::Error {
-                    message: e.to_string(),
-                },
-            },
-            Request::Stop { name } => match crate::process_man::stop_process(name).await {
-                Ok(()) => Response::Ok {
-                    message: "Process stopped successfully".into(),
-                },
-                Err(e) => Response::Error {
-                    message: e.to_string(),
-                },
-            },
-            Request::KillDaemon => {
-                crate::process_man::kill_daemon().await;
-                Response::Ok {
-                    message: "Daemon killed successfully".into(),
-                }
-            }
+        let (resp_tx, resp_rx) = oneshot::channel();
+
+        let work = WorkItem::new(request, resp_tx);
+
+        if tx.send(work).await.is_err() {
+            return Ok(());
+        }
+
+        if let Ok(resp) = resp_rx.await {
+            let reply = to_bytes::<rancor::Error>(&resp)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+            let len = reply.len() as u32;
+            stream.write_u32(len).await?;
+            stream.write_all(&reply).await?;
         }
     }
 }
