@@ -1,5 +1,5 @@
 use std::{
-    os::unix::fs::PermissionsExt as _, sync::Arc, time::{Duration, SystemTime}
+    sync::Arc, time::{Duration, SystemTime}
 };
 
 use rama::{error::OpaqueError, tls::{boring::core::{

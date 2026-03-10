@@ -22,9 +22,14 @@ mod trust_ca;
 
 mod state;
 
+mod daemon;
+
+mod cli;
+
 static ROUTES_MANAGER: LazyLock<Arc<RouteManager>> = LazyLock::new(|| Arc::new(routes::RouteManager::new()));
 
 static APP_STATE: LazyLock<Arc<ProxyState>> = LazyLock::new(|| {
+    init_app_storage().unwrap();
     let state_dir = app_data_dir();
     let (ca_cert, ca_key) = load_ca(&state_dir).expect("CA Certificates should be installed!");
 
@@ -41,12 +46,21 @@ static PROCESS_MANAGER: LazyLock<Arc<ProcessManager>> = LazyLock::new(|| Arc::ne
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let state_dir = app_data_dir();
+
+    #[cfg(windows)]
+    {
+        daemon::start()?
+    }
     
+    #[cfg(unix)]
+    {
+        daemon::start(&state_dir)
+    }
+
     println!("Hello, world!");
-    init_app_storage().unwrap();
     let state = APP_STATE.clone();
     let process_manager = PROCESS_MANAGER.clone();
-    
+
     state.routes
         .insert(
             "localhost".into(),
@@ -55,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
                 pid: 1234,
             },
         );
-    
+
 
     tokio::spawn(async {
         proxy::start_proxy(state).await;

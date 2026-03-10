@@ -1,4 +1,3 @@
-use mio::{Events, Poll};
 use std::{
     fs::{Permissions, set_permissions},
     io,
@@ -16,6 +15,7 @@ pub struct IpcListener {
 }
 
 pub type IpcStream = UnixStream;
+pub type ClientIpcStream = UnixStream;
 
 impl IpcListenerTrait for IpcListener {
     async fn bind(path: &str) -> io::Result<Self> {
@@ -34,4 +34,8 @@ impl IpcListenerTrait for IpcListener {
         Ok(stream)
     }
     
+}
+
+pub async fn connect(path: &str) -> io::Result<ClientIpcStream> {
+    UnixStream::connect(path).await
 }

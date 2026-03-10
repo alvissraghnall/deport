@@ -4,6 +4,7 @@ use tokio::net::windows::named_pipe::{
     ServerOptions,
 };
 use std::io;
+use crate::ipc::IpcListenerTrait;
 
 pub struct IpcListener {
     name: String,
@@ -19,7 +20,7 @@ impl IpcListenerTrait for IpcListener {
     }
 
     async fn accept(&self) -> io::Result<IpcStream> {
-        let mut server = ServerOptions::new()
+        let server = ServerOptions::new()
             .first_pipe_instance(true)
             .create(&self.name)?;
 
@@ -29,4 +30,3 @@ impl IpcListenerTrait for IpcListener {
     }
 
 }
-

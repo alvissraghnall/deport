@@ -9,7 +9,6 @@ use futures::future::join_all;
 use rkyv::{Archive, Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::{Mutex, mpsc, watch};
 use tokio::task::JoinHandle;
 
@@ -369,7 +368,7 @@ impl Process {
 
     /// Waits for a signal that requests a graceful shutdown, Ctrl-C (SIGINT).
     #[cfg(windows)]
-    async fn wait_for_signal_impl() {
+    async fn wait_for_signal_impl(&self) {
         use tokio::signal::windows;
 
         // Infos here:

@@ -175,6 +175,7 @@ pub fn trust_ca(ca_path: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+    #[cfg(unix)]
     use std::os::unix::process::ExitStatusExt;
     use std::process::ExitStatus;
 
@@ -183,6 +184,7 @@ mod tests {
         pub succeed: bool,
     }
 
+    #[cfg(unix)]
     impl CommandRunner for MockCommandRunner {
         fn run(&self, program: &str, args: &[&str]) -> std::io::Result<ExitStatus> {
             self.calls.borrow_mut().push((
@@ -194,9 +196,11 @@ mod tests {
 
             Ok(ExitStatus::from_raw(code))
         }
+        
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn debian_runs_correct_command() {
         let mock = MockCommandRunner {
             calls: RefCell::new(vec![]),

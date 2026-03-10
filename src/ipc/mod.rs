@@ -1,28 +1,36 @@
 #[cfg(target_os = "windows")]
 mod windows;
 
+#[cfg(target_os = "windows")]
+mod windows_client;
+
 #[cfg(target_family = "unix")]
 mod unix;
 
 use std::{io, sync::Arc};
 
 use rkyv::{Archive, Deserialize, Serialize, from_bytes, rancor, to_bytes};
+
 #[cfg(target_os = "windows")]
 pub use windows::*;
+
+#[cfg(target_os = "windows")]
+pub use windows_client::*;
 
 #[cfg(target_family = "unix")]
 pub use unix::*;
 
 pub mod worker;
+pub mod client;
 
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::{mpsc::{self, Sender}, oneshot},
 };
 
 use crate::{
     ipc::worker::WorkItem,
-    process_man::{Process, ProcessConfig, ProcessInfo, ProcessManager},
+    process_man::{ProcessConfig, ProcessInfo, ProcessManager},
 };
 
 trait IpcListenerTrait {
@@ -32,6 +40,8 @@ trait IpcListenerTrait {
 
     async fn accept(&self) -> std::io::Result<IpcStream>;
 }
+
+pub trait IpcStreamTrait: AsyncRead + AsyncWrite + Unpin + Send {}
 
 #[derive(Debug, Serialize, Deserialize, Archive)]
 pub(crate) enum Request {
@@ -105,8 +115,6 @@ async fn handle_client<T>(mut stream: T, tx: Sender<WorkItem>) -> io::Result<()>
 where
     T: AsyncReadExt + AsyncWriteExt + Unpin,
 {
-    let mut buf = [0u8; 1024];
-
     loop {
         let msg_len = match stream.read_u32().await {
             Ok(0) => return Ok(()),
