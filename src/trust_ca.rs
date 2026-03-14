@@ -3,7 +3,7 @@ use std::{fs, path::Path, process::Command};
 use anyhow::{Result, bail};
 use rama::tls::boring::core::{
     stack::Stack,
-    x509::{X509, X509Ref, X509StoreContext, store::X509StoreBuilder},
+    x509::{X509, X509StoreContext, store::X509StoreBuilder},
 };
 
 #[derive(Debug)]

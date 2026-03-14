@@ -4,7 +4,7 @@ use dashmap::DashMap;
 use rama::proxy::Proxy;
 use tokio::sync::mpsc;
 
-use crate::{ipc::worker::{WorkItem, worker_loop}, process_man::ProcessManager, routes::RouteManager, sni::load_ca, state::{ProxyState, SharedState, app_data_dir, init_app_storage}};
+use crate::{commands::{Arguments, run::handle_run}, ipc::worker::{WorkItem, worker_loop}, process_man::ProcessManager, routes::RouteManager, sni::load_ca, state::{ProxyState, SharedState, app_data_dir, init_app_storage}};
 
 mod process_man;
 
@@ -24,7 +24,9 @@ mod state;
 
 mod daemon;
 
-mod cli;
+mod cli_utils;
+
+mod commands;
 
 static ROUTES_MANAGER: LazyLock<Arc<RouteManager>> = LazyLock::new(|| Arc::new(routes::RouteManager::new()));
 
@@ -46,6 +48,8 @@ static PROCESS_MANAGER: LazyLock<Arc<ProcessManager>> = LazyLock::new(|| Arc::ne
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let state_dir = app_data_dir();
+
+    let args = <Arguments as clap::Parser>::parse();
 
     #[cfg(windows)]
     {
@@ -81,6 +85,17 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(worker_loop(rx, process_manager));
 
     ipc::run(tx).await?;
+
+    match args.command {
+        commands::Commands::Run(run_args) => {
+            handle_run(run_args);
+        },
+        commands::Commands::Hosts => todo!(),
+        commands::Commands::Trust => todo!(),
+        commands::Commands::Proxy => todo!(),
+        commands::Commands::List => todo!(),
+        commands::Commands::Stab => todo!(),
+    }
 
     Ok(())
 }

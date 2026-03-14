@@ -6,12 +6,16 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.102"
 arc-swap = "1.8.2"
+clap = { version = "4.6.0", features = ["derive"] }
+colored = "3.1.1"
 dashmap = "6.1.0"
 directories = "6.0.0"
 futures = "0.3.32"
 openssl = "0.10.75"
 openssl-sys = "0.9.111"
 rama = { version = "0.2.0", features = ["full"] }
+rand = "0.10.0"
+regex = "1.12.3"
 rkyv = "0.8.15"
 # process-man = { version = "0.1.0", path = "process-man" }
 tokio = { version = "1.49.0", features = ["process", "rt", "macros", "io-util", "sync", "net", "time", "signal"] }

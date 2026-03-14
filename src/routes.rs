@@ -30,6 +30,13 @@ impl RouteManager {
         self.routes.get(hostname).map(|r| r.clone())
     }
 
+    pub fn list(&self) -> Vec<(String, Route)> {
+        self.routes
+            .iter()
+            .map(|val| (val.key().to_string(), val.value().clone()))
+            .collect()
+    }
+
     pub fn update(&self, hostname: &str, route: Route) -> Result<(), &'static str> {
         if let Some(mut existing) = self.routes.get_mut(hostname) {
             *existing = route;
