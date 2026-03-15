@@ -1,6 +1,13 @@
 use anyhow::{Result, bail};
 use clap::Args;
+use colored::Colorize as _;
 use rand::RngExt as _;
+
+use crate::{
+    ipc::{ClientIpcStream, client::IpcClient},
+    process_man::get_default_proxy_port,
+    proxy::is_proxy_running,
+};
 
 #[derive(Args, Debug)]
 pub struct RunArgs {
@@ -21,17 +28,20 @@ pub struct RunArgs {
     port: Option<u16>,
 
     #[arg(short, long)]
+    proxy_port: Option<u16>,
+
+    #[arg(short, long)]
     env: Option<Vec<String>>,
 }
 
-pub fn handle_run(args: RunArgs) -> Result<()> {
+pub async fn handle_run(args: &RunArgs, client: &ClientIpcStream) -> Result<()> {
     let base_name: String;
 
     if args.args.is_empty() {
         return Ok(());
     }
 
-    if let Some(name) = args.name {
+    if let Some(name) = &args.name {
         let sanitized = crate::cli_utils::sanitize_rfc1035(&name);
         if sanitized.is_empty() {
             bail!("Invalid name: {}", name);
@@ -58,6 +68,24 @@ pub fn handle_run(args: RunArgs) -> Result<()> {
 
                 format!("deported-{}", rand_name.to_lowercase())
             });
+    }
+
+    if !is_proxy_running(args.proxy_port, Some(true)).await {
+        let proxy_port = args.proxy_port.unwrap_or(get_default_proxy_port());
+        if proxy_port < 1024 {
+            println!("{}", "Proxy is not running.".red());
+            println!("{}", "Start the proxy first (requires sudo for this port):".blue());
+            println!("{}", "    sudo deport proxy start -p 80   ".cyan());
+            println!("{}", "Or use the default port (no sudo needed):".blue());
+            println!("{}", "    deport proxy start   ".cyan());
+            std::process::exit(1);
+        } else {
+            println!("{}", "Starting proxy...".yellow());
+
+            // proxy start, i just realizrd i should've led with this lmfaooo
+            // grr
+
+        }
     }
 
     Ok(())

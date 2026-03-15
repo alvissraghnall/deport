@@ -18,9 +18,9 @@ use rama::{
         },
     },
 };
-use std::{collections::HashMap, fmt, fs, path::PathBuf};
+use std::{fmt, fs, path::PathBuf};
 use std::{sync::Arc,};
-use tokio::sync::{Mutex, OnceCell, RwLock};
+use tokio::sync::{OnceCell};
 
 use crate::{certs::{generate_ca_cert, generate_cert_for_host}, state::ProxyState};
 
@@ -186,8 +186,6 @@ pub fn load_ca(state_dir: &PathBuf) -> Result<(X509, PKey<Private>), Box<dyn std
     Ok((ca_cert, ca_key))
 }
 
-#[tokio::main]
-async fn main() {
 
 //         let http_service = HttpServer::auto(exec).service(service_fn(http_service));
 
@@ -205,4 +203,3 @@ async fn main() {
 //     });
 
 //     shutdown.shutdown_with_limit(Duration::from_secs(30)).await.unwrap();
-}

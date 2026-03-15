@@ -1,12 +1,15 @@
 use std::{convert::Infallible, sync::Arc, time::Duration};
 
-use crate::{process_man::get_default_proxy_port, routes::RouteManager, sni::AsyncTlsIssuerService, state::SharedState};
+use crate::{
+    process_man::get_default_proxy_port, routes::RouteManager, sni::AsyncTlsIssuerService,
+    state::SharedState,
+};
 use rama::{
     Context, Layer as _, Service,
     context::RequestContextExt,
     graceful::ShutdownGuard,
     http::{
-        self, Request, Response, StatusCode,
+        Request, Response, StatusCode,
         client::EasyHttpWebClient,
         layer::{
             remove_header::{RemoveRequestHeaderLayer, RemoveResponseHeaderLayer},
@@ -15,14 +18,14 @@ use rama::{
         },
         matcher::MethodMatcher,
         server::HttpServer,
-        service::web::response::IntoResponse as _,
+        service::{client::HttpClientExt, web::response::IntoResponse as _},
     },
     layer::ConsumeErrLayer,
     net::{http::RequestContext, stream::ClientSocketInfo, tls::server::SelfSignedData},
     rt::Executor,
     service::service_fn,
     tcp::{client::service::Forwarder, server::TcpListener},
-    tls::{boring::core::{pkey::{Private, PKey}, x509::X509}, rustls::server::{TlsAcceptorDataBuilder, TlsAcceptorLayer}},
+    tls::rustls::server::{TlsAcceptorDataBuilder, TlsAcceptorLayer},
 };
 
 async fn tls_term(guard: ShutdownGuard, state: SharedState) {
@@ -30,16 +33,11 @@ async fn tls_term(guard: ShutdownGuard, state: SharedState) {
     let client = Arc::new(EasyHttpWebClient::default());
 
     let state_cl = state.clone();
-    
-    let http_core =
-        service_fn(move |req| {
-            let routes = state.routes.clone();
-            internal_http_service(
-                req, 
-                routes, 
-                client.clone())
-        }
-        );
+
+    let http_core = service_fn(move |req| {
+        let routes = state.routes.clone();
+        internal_http_service(req, routes, client.clone())
+    });
 
     let http_stack = HttpServer::auto(executor).service(
         (
@@ -154,6 +152,8 @@ async fn internal_http_service(
 
     req.headers_mut()
         .insert("x-forwarded-for", ip.parse().unwrap());
+    req.headers_mut()
+        .insert("x-deport", 1.to_string().parse().unwrap());
 
     let ctx = Context::default();
     let response = match client.serve(ctx, req).await {
@@ -184,4 +184,37 @@ pub(crate) async fn start_proxy(state: SharedState) {
         .shutdown_with_limit(Duration::from_secs(3))
         .await
         .expect("graceful shutdown");
+}
+
+pub(crate) async fn is_proxy_running(port: Option<u16>, tls: Option<bool>) -> bool {
+    let http = match tls {
+        Some(true) => "https",
+        Some(false) => "http",
+        None => "http",
+    };
+
+    let port = port.unwrap_or(get_default_proxy_port());
+
+    let client = EasyHttpWebClient::default();
+    let ctx = Context::default();
+    let req = Request::builder()
+        .method("HEAD")
+        .uri(format!("{}://127.0.0.1:{}/", http, port))
+        .body("".into())
+        .unwrap();
+
+    match client.execute(ctx, req).await {
+        Ok(body) => {
+            let deport_flag = body.headers().get("x-deport");
+            match deport_flag {
+                Some(flag) if flag.to_str().unwrap() == "1" => {
+                    tracing::info!("Proxy is running");
+                    return true;
+                }
+                None => false,
+                _ => false,
+            }
+        }
+        Err(_) => false,
+    }
 }

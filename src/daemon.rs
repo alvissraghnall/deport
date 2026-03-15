@@ -23,30 +23,25 @@ use windows_service::{
 
 static SHUTDOWN: LazyLock<Arc<AtomicBool>> = LazyLock::new(|| Arc::new(AtomicBool::new(false)));
 
-/// Shared startup function that wires up the core server features.
 pub async fn run_server_components() -> anyhow::Result<()> {
     tracing::info!("Initializing server components...");
     
     let state = crate::APP_STATE.clone();
     let process_manager = crate::PROCESS_MANAGER.clone();
 
-    // 1. Start TLS/HTTP Proxy
     tokio::spawn(async {
         crate::proxy::start_proxy(state).await;
     });
 
-    // 2. Setup Worker Loop for commands
     let (tx, rx) = tokio::sync::mpsc::channel::<crate::ipc::worker::WorkItem>(100);
     tokio::spawn(crate::ipc::worker::worker_loop(rx, process_manager));
 
-    // 3. Start listening for incoming IPC clients (blocks the task)
     crate::ipc::run(tx).await?;
     Ok(())
 }
 
 #[cfg(unix)]
-pub fn start(path: &Path) {
-pub async fn start(path: &Path) -> anyhow::Result<()> {
+pub fn start(path: &Path) -> anyhow::Result<()> {
     let stdout = File::create("/tmp/deport.out").unwrap();
     let stderr = File::create("/tmp/deport.err").unwrap();
 
@@ -62,12 +57,15 @@ pub async fn start(path: &Path) -> anyhow::Result<()> {
         Err(e) => eprintln!("Error, {}", e),
     }
 
-    tokio::spawn(async {
-        setup_unix_signal_handler().await;
-    });
-    
-    // Execute the long-running daemon logic
-    run_server_components().await?;
+    // safe to spin up tokio runtime as process has forked in bg
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        tokio::spawn(async {
+            setup_unix_signal_handler().await;
+        });
+        
+        run_server_components().await
+    })?;
     
     Ok(())
 }
@@ -110,9 +108,6 @@ async fn setup_unix_signal_handler() {
 fn daemon_loop_win() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        while !SHUTDOWN.load(Ordering::Relaxed) {
-            // state updates
-            tokio::time::sleep(Duration::from_millis(500)).await;
         tokio::spawn(async {
             while !SHUTDOWN.load(Ordering::Relaxed) {
                 tokio::time::sleep(Duration::from_millis(500)).await;

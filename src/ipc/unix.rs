@@ -4,11 +4,10 @@ use std::{
     os::unix::fs::PermissionsExt as _,
 };
 use tokio::{
-    io::AsyncReadExt as _,
     net::{UnixListener, UnixStream},
 };
 
-use crate::ipc::{IpcListenerTrait, Request};
+use crate::ipc::{IpcListenerTrait};
 
 pub struct IpcListener {
     inner: UnixListener,

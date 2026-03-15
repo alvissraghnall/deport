@@ -1,7 +1,8 @@
-use anyhow::bail;
+use std::io::{self, Write as _};
+
 use colored::Colorize;
 
-use crate::{app_data_dir, commands::run::RunArgs, trust_ca::trust_ca};
+use crate::{app_data_dir, trust_ca::trust_ca};
 
 pub fn handle_command(args: &[String]) {
     if args.len() < 2 {
@@ -165,7 +166,7 @@ fn handle_list (routes_manager: &crate::routes::RouteManager, tls: bool) {
     std::process::exit(0);
 }
 
-fn handle_get (args: &[String]) {
+fn handle_get (_args: &[String]) {
 
 }
 
@@ -270,4 +271,29 @@ pub fn sanitize_rfc1035(hostname: &str) -> String {
     }
     
     result
+}
+
+
+pub fn prompt_input(prompt: &str) -> anyhow::Result<String> {
+    print!("{}", prompt);
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    Ok(input.trim().to_string())
+}
+
+
+pub fn confirm_action(prompt: &str) -> anyhow::Result<bool> {
+    loop {
+        print!("{} [y/N]: ", prompt);
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+
+        match input.trim().to_lowercase().as_str() {
+            "y" | "yes" => return Ok(true),
+            "n" | "no" | "" => return Ok(false),
+            _ => println!("Please enter 'y' or 'n'"),
+        }
+    }
 }

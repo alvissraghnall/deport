@@ -2,14 +2,12 @@ use std::io;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::time::Duration;
 
 use dashmap::DashMap;
-use futures::future::join_all;
 use rkyv::{Archive, Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::{Mutex, mpsc, watch};
+use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 
 const DEFAULT_PROXY_PORT: u16 = 1999;
@@ -66,8 +64,8 @@ impl ProcessManager {
     }
 
     pub async fn stop_all(&self) {
-        self.processes.iter().map(async |proc| {
-            proc.value().kill().await;
+        let _ = self.processes.iter().map(async |proc| {
+            let _ = proc.value().kill().await;
         });
     }
 }
@@ -134,7 +132,7 @@ enum SupervisorCommand {
 impl Process {
     /// Spawns a new process with the given configuration.
     /// This function returns immediately after the fork.
-    pub async fn spawn(mut config: ProcessConfig) -> io::Result<Self> {
+    pub async fn spawn(config: ProcessConfig) -> io::Result<Self> {
         let port = match config.port {
             Some(p) => p,
             None => get_free_port().ok_or_else(|| {
@@ -158,18 +156,18 @@ impl Process {
         // ensures that grandchildren (e.g. npm +++ node) are also killed.
         #[cfg(unix)]
         {
-            use std::os::unix::process::CommandExt as _;
+            // use std::os::unix::process::CommandExt as _;
             cmd.process_group(0);
         }
 
-        let mut child = cmd.spawn()?;
+        let child = cmd.spawn()?;
         let pid = child.id().unwrap_or(0);
 
         let state = Arc::new(AtomicU8::new(STATE_RUNNING));
         let exit_code = Arc::new(Mutex::new(None));
         let logs = ProcessLogs::default();
 
-        let (cmd_tx, mut cmd_rx) = mpsc::channel::<SupervisorCommand>(1);
+        let (cmd_tx, cmd_rx) = mpsc::channel::<SupervisorCommand>(1);
 
         let supervisor = Self::start_supervisor(
             child,
@@ -323,7 +321,7 @@ impl Process {
 
     /// Waits for the process to terminate completely.
     /// Consumes the handle to ensure no double-wait.
-    pub async fn wait(mut self) -> io::Result<ProcessInfo> {
+    pub async fn wait(self) -> io::Result<ProcessInfo> {
         let handle = self.supervisor.lock().await.take();
 
         if let Some(h) = handle {

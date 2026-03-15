@@ -1,6 +1,6 @@
 use rkyv::{rancor, to_bytes};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use std::{fmt::Error, io};
+use std::{io};
 
 use crate::ipc::{ClientIpcStream, Request, Response};
 

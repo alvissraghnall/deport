@@ -24,7 +24,7 @@ pub mod worker;
 pub mod client;
 
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncWriteExt},
     sync::{mpsc::{self, Sender}, oneshot},
 };
 
@@ -41,7 +41,7 @@ trait IpcListenerTrait {
     async fn accept(&self) -> std::io::Result<IpcStream>;
 }
 
-pub trait IpcStreamTrait: AsyncRead + AsyncWrite + Unpin + Send {}
+// pub trait IpcStreamTrait: AsyncRead + AsyncWrite + Unpin + Send {}
 
 #[derive(Debug, Serialize, Deserialize, Archive)]
 pub(crate) enum Request {
@@ -91,10 +91,10 @@ impl Request {
 
 pub async fn run(tx: mpsc::Sender<WorkItem>) -> std::io::Result<()> {
     #[cfg(unix)]
-    let addr = "/tmp/mydaemon.sock";
+    let addr = "/tmp/deport.sock";
 
     #[cfg(windows)]
-    let addr = r"\\.\pipe\mydaemon";
+    let addr = r"\\.\pipe\deport";
 
     let listener = IpcListener::bind(addr).await?;
 

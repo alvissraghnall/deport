@@ -11,7 +11,7 @@ use rama::{error::OpaqueError, tls::{boring::core::{
     pkey::{Id, PKey, PKeyRef, Private},
     rsa::Rsa,
     x509::{
-        X509, X509NameBuilder, X509Ref, X509Req, X509ReqBuilder, X509VerifyResult,
+        X509, X509NameBuilder, X509Ref, X509Req, X509ReqBuilder,
         extension::{self, SubjectKeyIdentifier},
     },
 }, rustls::dep::{pki_types::{CertificateDer, PrivateKeyDer}, rustls::{crypto::aws_lc_rs, sign::CertifiedKey}}}};
@@ -188,7 +188,7 @@ fn generate_server_cert(
         serial.to_asn1_integer()?
     };
 
-    let subject_name = {
+    let _subject_name = {
         let mut name = X509NameBuilder::new()?;
         name.append_entry_by_text("CN", hosts[0].as_str())?;
         name.build()
