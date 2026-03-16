@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 pub mod run;
-// pub mod delete;
+pub mod proxy;
 // pub mod generate;
 // pub mod get;
 // pub mod list;
@@ -40,7 +40,8 @@ pub enum Commands {
 
     Trust,
 
-    Proxy,
+    #[command(subcommand)]
+    Proxy(proxy::ProxyCommands),
 
     List,
 

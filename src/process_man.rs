@@ -404,7 +404,7 @@ impl Process {
 }
 
 pub fn get_default_proxy_port() -> u16 {
-    let port_str = std::env::var("PROXY_PORT").unwrap_or_else(|_| DEFAULT_PROXY_PORT.to_string());
+    let port_str = std::env::var("DEPORT_PROXY_PORT").unwrap_or_else(|_| DEFAULT_PROXY_PORT.to_string());
     let port = port_str.parse().unwrap_or(DEFAULT_PROXY_PORT);
     // Validate port range (system ports 0-1023 are restricted)
     if port < 1024 || port >= 65535 {

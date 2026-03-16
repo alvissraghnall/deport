@@ -1,4 +1,4 @@
-use std::{convert::Infallible, sync::Arc, time::Duration};
+use std::{convert::Infallible, sync::Arc, time::Duration, sync::Mutex, sync::LazyLock};
 
 use crate::{
     process_man::get_default_proxy_port, routes::RouteManager, sni::AsyncTlsIssuerService,
@@ -7,7 +7,7 @@ use crate::{
 use rama::{
     Context, Layer as _, Service,
     context::RequestContextExt,
-    graceful::ShutdownGuard,
+    graceful::{self, ShutdownGuard},
     http::{
         Request, Response, StatusCode,
         client::EasyHttpWebClient,
@@ -28,9 +28,25 @@ use rama::{
     tls::rustls::server::{TlsAcceptorDataBuilder, TlsAcceptorLayer},
 };
 
-async fn tls_term(guard: ShutdownGuard, state: SharedState) {
+use tokio::sync::oneshot;
+
+pub static PROXY_SHUTDOWN_TX: LazyLock<Mutex<Option<oneshot::Sender<()>>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+/// Programmatically triggers a graceful shutdown of the proxy
+pub fn stop_proxy() {
+    if let Ok(mut lock) = PROXY_SHUTDOWN_TX.lock() {
+        if let Some(tx) = lock.take() {
+            let _ = tx.send(());
+            tracing::info!("Sent manual stop signal to proxy.");
+        }
+    }
+}
+
+async fn tls_term(guard: ShutdownGuard, state: SharedState, port: Option<u16>) {
     let executor = Executor::graceful(guard.clone());
     let client = Arc::new(EasyHttpWebClient::default());
+    let port = port.unwrap_or_else(|| get_default_proxy_port());
 
     let state_cl = state.clone();
 
@@ -73,9 +89,9 @@ async fn tls_term(guard: ShutdownGuard, state: SharedState) {
 
     println!(
         "Starting TLS termination proxy on port {}... ",
-        get_default_proxy_port()
+        port.to_string()
     );
-    TcpListener::bind(format!("127.0.0.1:{}", get_default_proxy_port()))
+    TcpListener::bind(format!("127.0.0.1:{}", port))
         .await
         .expect("bind TCP Listener: http")
         .serve_graceful(guard, tcp_service)
@@ -170,20 +186,31 @@ async fn internal_http_service(
     Ok(response)
 }
 
-pub(crate) async fn start_proxy(state: SharedState) {
+pub(crate) async fn start_proxy(state: SharedState, port: Option<u16>) {
+    let (tx, rx) = oneshot::channel();
+    if let Ok(mut lock) = PROXY_SHUTDOWN_TX.lock() {
+        *lock = Some(tx);
+    }
+
     let shutdown = rama::graceful::Shutdown::default();
 
     shutdown.spawn_task_fn({
         let state = state.clone();
         async move |guard: ShutdownGuard| {
-            tls_term(guard, state).await;
+            tls_term(guard, state, port).await;
         }
     });
 
-    shutdown
-        .shutdown_with_limit(Duration::from_secs(3))
-        .await
-        .expect("graceful shutdown");
+    tokio::select! {
+        _ = rx => {
+            tracing::info!("Proxy manual shutdown triggered. Draining connections...");
+            // Dropping shutdown signals all connected guards to wrap up.
+            drop(shutdown);
+        }
+        res = shutdown.shutdown_with_limit(Duration::from_secs(3)) => {
+            res.expect("graceful shutdown");
+        }
+    }
 }
 
 pub(crate) async fn is_proxy_running(port: Option<u16>, tls: Option<bool>) -> bool {

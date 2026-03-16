@@ -23,14 +23,14 @@ use windows_service::{
 
 static SHUTDOWN: LazyLock<Arc<AtomicBool>> = LazyLock::new(|| Arc::new(AtomicBool::new(false)));
 
-pub async fn run_server_components() -> anyhow::Result<()> {
+pub async fn run_server_components(proxy_port: Option<u16>) -> anyhow::Result<()> {
     tracing::info!("Initializing server components...");
     
     let state = crate::APP_STATE.clone();
     let process_manager = crate::PROCESS_MANAGER.clone();
 
-    tokio::spawn(async {
-        crate::proxy::start_proxy(state).await;
+    tokio::spawn(async move {
+        crate::proxy::start_proxy(state, proxy_port).await;
     });
 
     let (tx, rx) = tokio::sync::mpsc::channel::<crate::ipc::worker::WorkItem>(100);
@@ -41,7 +41,7 @@ pub async fn run_server_components() -> anyhow::Result<()> {
 }
 
 #[cfg(unix)]
-pub fn start(path: &Path) -> anyhow::Result<()> {
+pub fn start(path: &Path, proxy_port: Option<u16>) -> anyhow::Result<()> {
     let stdout = File::create("/tmp/deport.out").unwrap();
     let stderr = File::create("/tmp/deport.err").unwrap();
 
@@ -64,11 +64,14 @@ pub fn start(path: &Path) -> anyhow::Result<()> {
             setup_unix_signal_handler().await;
         });
         
-        run_server_components().await
+        run_server_components(proxy_port).await
     })?;
     
     Ok(())
 }
+
+/// WE ARE NOT PASSING PROXY_PORT INTO WINDOWS SERVICE YET COS I CAN'T FIGURE IT OUT
+/// RN, JAJAJAJAJAJAJAJAJAJAJAJAJAJAJAJAJAJAJAAJAAJAJJAJAAJA
 
 #[cfg(unix)]
 async fn setup_unix_signal_handler() {

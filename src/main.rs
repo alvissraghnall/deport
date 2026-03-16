@@ -1,8 +1,9 @@
 use std::{io, sync::{Arc, LazyLock}};
 
 use dashmap::DashMap;
+use futures::executor;
 
-use crate::{commands::{Arguments, run::handle_run}, ipc::ClientIpcStream, process_man::ProcessManager, routes::RouteManager, sni::load_ca, state::{ProxyState, app_data_dir, init_app_storage}};
+use crate::{commands::{Arguments, proxy::handle_proxy_command, run::handle_run}, ipc::ClientIpcStream, process_man::ProcessManager, routes::RouteManager, sni::load_ca, state::{ProxyState, app_data_dir, init_app_storage}};
 
 mod process_man;
 
@@ -55,21 +56,15 @@ fn main() -> anyhow::Result<()> {
     let args = <Arguments as clap::Parser>::parse();
 
     match args.command {
-        commands::Commands::Proxy => {
-            println!("Starting deported proxy daemon...");
-            
-            #[cfg(windows)]
-            daemon::start()?;
-            
-            #[cfg(unix)]
-            daemon::start(&state_dir)?;
+        commands::Commands::Proxy(cmd) => {
+            let _ = executor::block_on(handle_proxy_command(&cmd));
         },
         commands::Commands::Run(run_args) => {
             let stream: io::Result<ClientIpcStream> = tokio::runtime::Runtime::new().unwrap().block_on(async {
                 ipc::client::IpcClient::connect(addr).await
             });
             // let resp = ipc::client::IpcClient::send_request(stream, Request::Spawn {...}).await?;
-            let _ = handle_run(&run_args, &stream?);
+            let _ = executor::block_on(handle_run(&run_args, &stream?));
         },
         commands::Commands::Hosts => todo!(),
         commands::Commands::Trust => todo!(),
