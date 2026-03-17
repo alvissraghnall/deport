@@ -417,7 +417,7 @@ pub fn get_default_proxy_port() -> u16 {
     port
 }
 
-fn get_free_port() -> Option<u16> {
+pub(crate) fn get_free_port() -> Option<u16> {
     use std::net::{Ipv4Addr, TcpListener};
     if let Ok(listener) = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)) {
         if let Ok(addr) = listener.local_addr() {

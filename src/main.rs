@@ -3,7 +3,7 @@ use std::{io, sync::{Arc, LazyLock}};
 use dashmap::DashMap;
 use futures::executor;
 
-use crate::{commands::{Arguments, proxy::handle_proxy_command, run::handle_run}, ipc::ClientIpcStream, process_man::ProcessManager, routes::RouteManager, sni::load_ca, state::{ProxyState, app_data_dir, init_app_storage}};
+use crate::{commands::{Arguments, get::{self, handle_get}, list::handle_list, proxy::handle_proxy_command, run::handle_run, trust::handle_trust}, ipc::ClientIpcStream, process_man::ProcessManager, routes::RouteManager, sni::load_ca, state::{ProxyState, app_data_dir, init_app_storage}};
 
 mod process_man;
 
@@ -46,6 +46,7 @@ pub(crate) static PROCESS_MANAGER: LazyLock<Arc<ProcessManager>> = LazyLock::new
 
 fn main() -> anyhow::Result<()> {
     let state_dir = app_data_dir();
+    let routes_manager_clone = APP_STATE.routes.clone();
 
     #[cfg(unix)]
     let addr = "/tmp/deport.sock";
@@ -56,20 +57,22 @@ fn main() -> anyhow::Result<()> {
     let args = <Arguments as clap::Parser>::parse();
 
     match args.command {
-        commands::Commands::Proxy(cmd) => {
-            let _ = executor::block_on(handle_proxy_command(&cmd));
-        },
+        commands::Commands::Proxy(cmd) => tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let _ = handle_proxy_command(&cmd).await;
+        }),
         commands::Commands::Run(run_args) => {
-            let stream: io::Result<ClientIpcStream> = tokio::runtime::Runtime::new().unwrap().block_on(async {
-                ipc::client::IpcClient::connect(addr).await
+            let _: anyhow::Result<()> = tokio::runtime::Runtime::new().unwrap().block_on(async {
+                let stream = ipc::client::IpcClient::connect(addr).await;
+                handle_run(&run_args, &stream?).await
             });
             // let resp = ipc::client::IpcClient::send_request(stream, Request::Spawn {...}).await?;
-            let _ = executor::block_on(handle_run(&run_args, &stream?));
+            // let _ = executor::block_on(handle_run(&run_args, &stream?));
         },
         commands::Commands::Hosts => todo!(),
-        commands::Commands::Trust => todo!(),
-        commands::Commands::List => todo!(),
+        commands::Commands::Trust => handle_trust()?,
+        commands::Commands::List => handle_list(&routes_manager_clone, true)?,
         commands::Commands::Stab => todo!(),
+        commands::Commands::Get(get_args) => handle_get(&get_args, &routes_manager_clone)?,
     }
 
     Ok(())

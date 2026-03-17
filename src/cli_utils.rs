@@ -1,39 +1,53 @@
-use std::io::{self, Write as _};
+use std::{
+    io::{self, Write as _},
+    path::{self, Path},
+};
 
+use anyhow::anyhow;
 use colored::Colorize;
 
-use crate::{app_data_dir, trust_ca::trust_ca};
+static FRAMEWORKS_NEEDING_PORT: [(&str, bool); 6] = [
+    ("vite", true),
+    ("react-router", true),
+    ("astro", false),
+    ("ng", false),
+    ("react-native", false),
+    ("expo", false),
+];
 
-pub fn handle_command(args: &[String]) {
-    if args.len() < 2 {
-        print_help();
-        std::process::exit(0);
+pub(crate) fn inject_framework_flags(cmd: &str, args: &mut Vec<String>, port: u16) -> anyhow::Result<()> {
+    let path = Path::new(cmd);
+
+    let filename = path.file_name().ok_or(anyhow!("Invalid path to command provided!"))?;
+    let filename = filename.to_str().ok_or(anyhow!("Couldn't construct string from path"))?;
+
+    let framework_idx: Option<usize> = FRAMEWORKS_NEEDING_PORT.iter().position(|&val|  val.0 == filename);
+
+    match framework_idx {
+        Some(index) => {
+            let framework = FRAMEWORKS_NEEDING_PORT[index];
+            if !args.contains(&"--port".to_string()) {
+                args.push(format!("--port {}", port));
+
+                if framework.1 {
+                    args.push("--strictPort".to_string());
+                }
+            }
+
+            if !args.contains(&"--host".to_string()) {
+                let host = if filename == "expo" {
+                    "localhost"
+                } else {
+                    "0.0.0.0"
+                };
+                args.push(format!("--host {}", host));
+            }
+
+            Ok(())
+
+        },
+        None => return Ok(()),
     }
-    let cmd = &args[1];
-    if cmd == "--help" || cmd == "-h" {
-        print_help();
-        std::process::exit(0);
-    }
-}
-
-struct ParsedRunArgs {
-    force: bool,
-    /** Fixed app port (overrides automatic assignment). */
-    app_port: Option<u16>,
-    /** Override the inferred base name (from --name flag). */
-    name: Option<String>,
-    /** The child command and its arguments, passed through untouched. */
-    command_args: Vec<String>,
-}
-
-struct ParsedAppArgs {
-    name: String,
-
-    force: bool,
-    /** Fixed app port (overrides automatic assignment). */
-    app_port: Option<u16>,
-    /** The child command and its arguments, passed through untouched. */
-    command_args: Vec<String>,
 }
 
 fn app_port_from_env() -> Option<u16> {
@@ -63,131 +77,7 @@ fn parse_app_port(value: String) -> u16 {
     }
 }
 
-/**
- * Parse named-mode arguments: `[--force] <name> [--force] [--] <command...>`
- *
- * `--force` is recognized before and after the name. `--` stops flag
- * parsing. Everything after the flag region is the child command.
- * Unrecognized `--` flags are rejected to catch typos.
- */
-fn parse_app_args(args: &[String]) -> ParsedAppArgs {
-    let mut force = false;
-    let mut app_port: Option<u16> = None;
-    let mut i = 0;
-
-    while i < args.len() && args[i].starts_with("-") {
-        if args[i] == "--" {
-            i += 1;
-            break;
-        } else if args[i] == "--force" {
-            force = true;
-            i += 1;
-        } else if args[i] == "--app-port" {
-            app_port = Some(parse_app_port(args[i + 1].clone()));
-            i += 2;
-        } else {
-            eprintln!("{}", format!("Error: Unknown flag {}", args[i]).red());
-            eprintln!("{}", "  Known flags: --force, --app-port, --help".blue());
-            std::process::exit(1);
-        }
-        i += 1;
-    }
-
-    let name = &args[i];
-    i += 1;
-
-    // also allow flags after app name
-
-    while i < args.len() && args[i].starts_with("-") {
-        if args[i] == "--" {
-            i += 1;
-            break;
-        } else if args[i] == "--force" {
-            force = true;
-            i += 1;
-        } else if args[i] == "--app-port" {
-            app_port = Some(parse_app_port(args[i + 1].clone()));
-            i += 2;
-        } else {
-            eprintln!("{}", format!("Error: Unknown flag {}", args[i]).red());
-            eprintln!("{}", "  Known flags: --force, --app-port, --help".blue());
-            std::process::exit(1);
-        }
-        i += 1;
-    }
-
-    if app_port.is_none() {
-        app_port = app_port_from_env();
-    }
-
-    return ParsedAppArgs {
-        name: name.to_owned(),
-        force,
-        app_port,
-        command_args: args[i..].to_vec(),
-    };
-}
-
-fn print_version() {
-    const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-    println!("deport {}", VERSION);
-    std::process::exit(0);
-}
-
-fn handle_trust() {
-    let data_dir = app_data_dir();
-    let ca_path = data_dir.join("ca.crt");
-
-    if ca_path.exists() {
-        match trust_ca(&ca_path) {
-            Ok(_) => {
-                print!("{}", "Local CA added to system trust store".green());
-                std::process::exit(0);
-            },
-            Err(e) => {
-                eprintln!("{}", "Failed to add local CA to system trust store".red());
-                if e.to_string().contains("sudo") {
-                    eprintln!("{}", "You might need to run with sudo: sudo deport trust".cyan());
-                } else {
-                    eprintln!("{}", e.to_string().red());
-                }
-                std::process::exit(1);
-            }
-        }
-    } else {
-        eprintln!("{}", "Local CA not found".red());
-        std::process::exit(1);
-    }
-}
-
-fn handle_list (routes_manager: &crate::routes::RouteManager, tls: bool) {
-    list_routes(routes_manager, tls);
-    std::process::exit(0);
-}
-
-fn handle_get (_args: &[String]) {
-
-}
-
-fn list_routes(routes_manager: &crate::routes::RouteManager, tls: bool) {
-
-    let list = routes_manager.list();
-    if list.is_empty() {
-        println!("No active routes found");
-        return;
-    }
-    println!("Active routes:");
-    for (hostname, route) in list {
-        let url = format_url(hostname.as_str(), route.port,  tls);
-        let pid_str = format!("pid {}", route.pid);
-        let label = if route.pid == 0 { "inactive" } else { pid_str.as_str() };
-        println!("{} -> {} ({})", url, format!("localhost:{}", route.port), label);
-    }
-
-}
-
-fn format_url (hostname: &str, port: u16, tls: bool) -> String {
+pub(crate) fn format_url(hostname: &str, port: u16, tls: bool) -> String {
     if tls {
         format!("https://{}:{}", hostname, port)
     } else {
@@ -246,10 +136,10 @@ fn print_run_help() {
 
 pub fn sanitize_rfc1035(hostname: &str) -> String {
     let lower = hostname.to_lowercase();
-    
+
     let re = regex::Regex::new(r"[^a-z0-9\.-]").unwrap();
     let sanitized = re.replace_all(&lower, "-");
-    
+
     let labels: Vec<String> = sanitized
         .split('.')
         .map(|label| {
@@ -263,16 +153,15 @@ pub fn sanitize_rfc1035(hostname: &str) -> String {
             l
         })
         .collect();
-    
+
     let result = labels.join(".");
-    
+
     if result.len() > 255 {
         return result[..255].to_string();
     }
-    
+
     result
 }
-
 
 pub fn prompt_input(prompt: &str) -> anyhow::Result<String> {
     print!("{}", prompt);
@@ -281,7 +170,6 @@ pub fn prompt_input(prompt: &str) -> anyhow::Result<String> {
     io::stdin().read_line(&mut input)?;
     Ok(input.trim().to_string())
 }
-
 
 pub fn confirm_action(prompt: &str) -> anyhow::Result<bool> {
     loop {

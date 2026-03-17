@@ -1,4 +1,4 @@
-use std::{convert::Infallible, sync::Arc, time::Duration, sync::Mutex, sync::LazyLock};
+use std::{convert::Infallible, sync::Arc, sync::LazyLock, sync::Mutex, time::Duration};
 
 use crate::{
     process_man::get_default_proxy_port, routes::RouteManager, sni::AsyncTlsIssuerService,
@@ -28,16 +28,17 @@ use rama::{
     tls::rustls::server::{TlsAcceptorDataBuilder, TlsAcceptorLayer},
 };
 
-use tokio::sync::oneshot;
+use tokio::sync::{Notify, oneshot};
 
 pub static PROXY_SHUTDOWN_TX: LazyLock<Mutex<Option<oneshot::Sender<()>>>> =
     LazyLock::new(|| Mutex::new(None));
+// pub static NOTIFY: LazyLock<Arc<Notify>> = LazyLock::new(|| Arc::new(Notify::new()));
 
 /// Programmatically triggers a graceful shutdown of the proxy
 pub fn stop_proxy() {
     if let Ok(mut lock) = PROXY_SHUTDOWN_TX.lock() {
         if let Some(tx) = lock.take() {
-            let _ = tx.send(());
+            let _ = tx.send(()).ok();
             tracing::info!("Sent manual stop signal to proxy.");
         }
     }
@@ -192,7 +193,9 @@ pub(crate) async fn start_proxy(state: SharedState, port: Option<u16>) {
         *lock = Some(tx);
     }
 
-    let shutdown = rama::graceful::Shutdown::default();
+    let shutdown = rama::graceful::Shutdown::new(async move {
+        let _ = rx.await;
+    });
 
     shutdown.spawn_task_fn({
         let state = state.clone();
@@ -201,16 +204,10 @@ pub(crate) async fn start_proxy(state: SharedState, port: Option<u16>) {
         }
     });
 
-    tokio::select! {
-        _ = rx => {
-            tracing::info!("Proxy manual shutdown triggered. Draining connections...");
-            // Dropping shutdown signals all connected guards to wrap up.
-            drop(shutdown);
-        }
-        res = shutdown.shutdown_with_limit(Duration::from_secs(3)) => {
-            res.expect("graceful shutdown");
-        }
-    }
+    shutdown
+        .shutdown_with_limit(Duration::from_secs(3))
+        .await
+        .expect("graceful shutdown");
 }
 
 pub(crate) async fn is_proxy_running(port: Option<u16>, tls: Option<bool>) -> bool {

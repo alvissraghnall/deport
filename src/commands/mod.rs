@@ -2,9 +2,9 @@ use clap::{Parser, Subcommand};
 
 pub mod run;
 pub mod proxy;
-// pub mod generate;
-// pub mod get;
-// pub mod list;
+pub mod trust;
+pub mod list;
+pub mod get;
 // pub mod update;
 // pub mod utils;
 
@@ -44,6 +44,8 @@ pub enum Commands {
     Proxy(proxy::ProxyCommands),
 
     List,
+
+    Get(get::GetArgs),
 
     #[default]
     Stab,
