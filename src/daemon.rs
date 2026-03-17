@@ -1,5 +1,6 @@
 use std::sync::{
-    Arc, LazyLock, atomic::{AtomicBool, Ordering}
+    Arc, LazyLock,
+    atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
 #[cfg(unix)]
@@ -25,7 +26,7 @@ static SHUTDOWN: LazyLock<Arc<AtomicBool>> = LazyLock::new(|| Arc::new(AtomicBoo
 
 pub async fn run_server_components(proxy_port: Option<u16>) -> anyhow::Result<()> {
     tracing::info!("Initializing server components...");
-    
+
     let state = crate::APP_STATE.clone();
     let process_manager = crate::PROCESS_MANAGER.clone();
 
@@ -63,10 +64,10 @@ pub fn start(path: &Path, proxy_port: Option<u16>) -> anyhow::Result<()> {
         tokio::spawn(async {
             setup_unix_signal_handler().await;
         });
-        
+
         run_server_components(proxy_port).await
     })?;
-    
+
     Ok(())
 }
 
@@ -75,11 +76,10 @@ pub fn start(path: &Path, proxy_port: Option<u16>) -> anyhow::Result<()> {
 
 #[cfg(unix)]
 async fn setup_unix_signal_handler() {
-
     let signal_shutdown = SHUTDOWN.clone();
 
     let signals = tokio::spawn(async move {
-        use tokio::signal::unix::{signal, SignalKind};
+        use tokio::signal::unix::{SignalKind, signal};
 
         let mut sigterm = signal(SignalKind::terminate()).unwrap();
         let mut sigint = signal(SignalKind::interrupt()).unwrap();
@@ -108,7 +108,7 @@ async fn setup_unix_signal_handler() {
 }
 
 #[cfg(windows)]
-fn daemon_loop_win() {
+fn daemon_loop_win(proxy_port: Option<u16>) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
         tokio::spawn(async {
@@ -118,7 +118,7 @@ fn daemon_loop_win() {
         });
 
         // Execute the long-running daemon logic
-        if let Err(e) = run_server_components().await {
+        if let Err(e) = run_server_components(proxy_port).await {
             tracing::error!("Daemon server crashed: {}", e);
         }
     });
@@ -126,9 +126,10 @@ fn daemon_loop_win() {
 }
 
 #[cfg(windows)]
-pub fn start() -> WinResult<()> {
+pub fn start(proxy_port: Option<u16>) -> WinResult<()> {
     define_windows_service!(ffi_service_main, daemon_service_main);
-    service_dispatcher::start("DaemonService", ffi_service_main)?;
+    service_dispatcher::start("deportservice", ffi_service_main)?;
+    daemon_loop_win(proxy_port);
     Ok(())
 }
 
@@ -159,7 +160,7 @@ fn run_service(arguments: Vec<OsString>) -> WinResult<()> {
     };
 
     // Register system service event handler
-    let status_handle = service_control_handler::register("daemonservice", event_handler)?;
+    let status_handle = service_control_handler::register("deportservice", event_handler)?;
 
     let running_status = ServiceStatus {
         service_type: ServiceType::OWN_PROCESS,
@@ -171,6 +172,6 @@ fn run_service(arguments: Vec<OsString>) -> WinResult<()> {
         process_id: None,
     };
     status_handle.set_service_status(running_status)?;
-    daemon_loop_win();
+    // daemon_loop_win();
     Ok(())
 }

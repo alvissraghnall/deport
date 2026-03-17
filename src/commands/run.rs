@@ -1,15 +1,33 @@
-use std::io;
+use std::{env::current_dir, io, str::FromStr, sync::Arc};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use clap::Args;
 use colored::Colorize as _;
 use rand::RngExt as _;
 
 use crate::{
-    cli_utils::{format_url, inject_framework_flags}, commands::proxy::StartArgs, ipc::{ClientIpcStream, client::IpcClient}, process_man::{get_default_proxy_port, get_free_port}, proxy::is_proxy_running
+    cli_utils::{inject_framework_flags}, commands::proxy::StartArgs, ipc::{ClientIpcStream, Request, Response, client::IpcClient}, process_man::{ProcessConfig, get_default_proxy_port, get_free_port}, proxy::is_proxy_running, routes::{Route, RouteManager}
 };
 
-#[derive(Args, Debug)]
+/// Parse a single key-value pair
+fn parse_key_val<T: FromStr, U: FromStr>(input: &str) -> Result<Vec<(T, U)>>
+where
+    <T as FromStr>::Err: std::error::Error + Send + Sync + 'static,
+    <U as FromStr>::Err: std::error::Error + Send + Sync + 'static,
+{
+    input
+        .trim()
+        .split(',')
+        .map(|item| {
+            let idx = item
+                .find('=')
+                .with_context(|| format!("invalid KEY=value: no `=` found in `{}`", input))?;
+            Ok((input[..idx].parse()?, input[idx + 1..].parse()?))
+        })
+        .collect::<Result<Vec<(T, U)>>>()
+}
+
+#[derive(Args, Debug, Clone)]
 pub struct RunArgs {
     /// Process Command to run
     cmd: String,
@@ -30,11 +48,11 @@ pub struct RunArgs {
     #[arg(short, long)]
     proxy_port: Option<u16>,
 
-    #[arg(short, long)]
-    env: Option<Vec<String>>,
+    #[arg(short, long, value_name="NAME=VALUE", value_parser = parse_key_val::<String, String>)]
+    env: Option<std::vec::Vec<(String, String)>>,
 }
 
-pub async fn handle_run(args: &RunArgs, client: &ClientIpcStream) -> Result<()> {
+pub async fn handle_run(args: &mut RunArgs, client: &mut ClientIpcStream, routes_manager: &RouteManager) -> Result<()> {
     let base_name: String;
 
     if args.args.is_empty() {
@@ -101,8 +119,6 @@ pub async fn handle_run(args: &RunArgs, client: &ClientIpcStream) -> Result<()> 
                     return Err(e);
                 }
             }
-            // proxy start, i just realizrd i should've led with this lmfaooo
-            // grr
         }
     } else {
         println!("{}", "Proxy is already running...".yellow());
@@ -112,14 +128,57 @@ pub async fn handle_run(args: &RunArgs, client: &ClientIpcStream) -> Result<()> 
         println!("{}", format!("Using custom port: {}", args.port.unwrap()).bright_green())
     }
 
-    inject_framework_flags(&args.cmd, &mut args.args, port)
+    let port = match args.port {
+        Some(p) => p,
+        None => get_free_port().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::AddrInUse, "No free ports available")
+        })?,
+    };
 
+    inject_framework_flags(&args.cmd, &mut args.args, port)?;
+
+    println!("{}", format!("Running PORT={} HOST={} {:?}", port, "0.0.0.0", args.cmd.as_str().to_owned() + " " + &args.args.join(" ")).bright_cyan());
+    
+    // let cmd_env = match &mut args.env {
+    //     Some(args) => {
+    //         let mut _args = Vec::new();
+    //         _args.push("HOST=127.0.0.1".to_string());
+    //         _args.push(format!("PORT={}", port));
+    //         args.iter().map(|v| _args.push(v.clone()));
+    //         Some(_args)
+    //     },
+    //     None => {
+    //         let mut _args = Vec::new();
+    //         _args.push("HOST=127.0.0.1".to_string());
+    //         _args.push(format!("PORT={}", port));
+    //         args.env.replace(_args)
+    //     },
+    // };
+    
+    let config = ProcessConfig {
+        name: base_name.clone(),
+        command: args.cmd.clone(),
+        args: args.args.clone(),
+        port: Some(port),
+        env: args.env.take().unwrap_or_default(),
+        cwd: current_dir()?.to_str().map(str::to_string),
+    };
+
+    let request = Request::Spawn { config };
+    
+    let response = IpcClient::send_request(client, request).await?;
+    
+    if let Response::ProcessInfo(process_info) = response {
+        println!("{}", format!("Process {} now running on port {} with PID: {}", process_info.name, process_info.port, process_info.pid).blue());
+        let route = Route {
+            pid: process_info.pid,
+            port: process_info.port,
+        };
+        
+        let host = format!("{}.localhost", base_name.as_str());
+        routes_manager.insert(Arc::from(host), route);
+    }
     // let final_url = format_url(&base_name, args.proxy_port, true);
-
-    // let port = args.port.unwrap_or_else(|| {
-    //     get_free_port()
-    //         .ok_or_else(|| io::Error::new(io::ErrorKind::AddrInUse, "No free ports available"))?
-    // });
 
     Ok(())
 }

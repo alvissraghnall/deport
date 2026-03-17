@@ -23,7 +23,6 @@ impl IpcClient {
 
         let mut buf = vec![0u8; n as usize];
         stream.read_exact(&mut buf).await?;
-
         
         let resp = rkyv::from_bytes::<Response, rancor::Error>(&buf)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;

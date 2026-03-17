@@ -3,9 +3,9 @@ use tokio::net::windows::named_pipe::NamedPipeClient;
 use tokio::time::{sleep, Duration};
 use std::io;
 use windows_sys::Win32::Foundation::ERROR_PIPE_BUSY;
-use crate::ipc::IpcStreamTrait;
+// use crate::ipc::IpcStreamTrait;
 
-impl IpcStreamTrait for NamedPipeClient {}
+// impl IpcStreamTrait for NamedPipeClient {}
 
 pub type ClientIpcStream = NamedPipeClient;
 

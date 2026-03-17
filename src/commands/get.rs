@@ -1,5 +1,3 @@
-use core::fmt;
-
 use anyhow::bail;
 use clap::{Args, arg};
 

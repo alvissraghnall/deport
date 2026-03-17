@@ -16,10 +16,10 @@ use rama::{error::OpaqueError, tls::{boring::core::{
     },
 }, rustls::dep::{pki_types::{CertificateDer, PrivateKeyDer}, rustls::{crypto::aws_lc_rs, sign::CertifiedKey}}}};
 
-const CA_KEY_FILE: &str = "ca-key.pem";
-const CA_CERT_FILE: &str = "ca.pem";
-const SERVER_KEY_FILE: &str = "server-key.pem";
-const SERVER_CERT_FILE: &str = "server.pem";
+// const CA_KEY_FILE: &str = "ca-key.pem";
+// const CA_CERT_FILE: &str = "ca.pem";
+// const SERVER_KEY_FILE: &str = "server-key.pem";
+// // const SERVER_CERT_FILE: &str = "server.pem";
 const SERVER_VALIDITY_DAYS: u32 = 365;
 
 /** Buffer (in ms) subtracted from expiry to trigger early regeneration. */
@@ -27,7 +27,7 @@ const EXPIRY_BUFFER_MS: i64 = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 const CA_COMMON_NAME: &str = "DEPORT LOCAL CA";
 
-const OPENSSL_TIMEOUT_MS: i64 = 15_000;
+// const OPENSSL_TIMEOUT_MS: i64 = 15_000;
 
 const CA_VALIDITY_DAYS: u32 = 3650;
 

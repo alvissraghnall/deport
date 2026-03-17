@@ -143,6 +143,7 @@ impl Process {
         let mut cmd = Command::new(&config.command);
         cmd.args(&config.args)
             .env("PORT", port.to_string())
+            .env("HOST", "127.0.0.1")
             .envs(config.env.iter().cloned())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

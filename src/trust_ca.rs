@@ -177,7 +177,6 @@ mod tests {
     use std::cell::RefCell;
     #[cfg(unix)]
     use std::os::unix::process::ExitStatusExt;
-    use std::process::ExitStatus;
 
     pub struct MockCommandRunner {
         pub calls: RefCell<Vec<(String, Vec<String>)>>,

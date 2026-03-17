@@ -2,9 +2,8 @@ use anyhow::{Result, bail};
 use clap::{Args, Subcommand};
 use colored::Colorize as _;
 
-#[cfg(unix)]
 use crate::daemon;
-use crate::{ipc::ClientIpcStream, process_man::get_default_proxy_port, proxy::{is_proxy_running, stop_proxy}, trust_ca::{is_ca_trusted, trust_ca}};
+use crate::{process_man::get_default_proxy_port, proxy::{is_proxy_running, stop_proxy}, trust_ca::{is_ca_trusted}};
 
 #[derive(Subcommand, Debug)]
 pub enum ProxyCommands {
@@ -88,12 +87,12 @@ pub async fn handle_proxy_command(cmd: &ProxyCommands) -> Result<()> {
             println!("Starting deported proxy daemon...");
 
             #[cfg(windows)]
-            daemon::start()?;
+            daemon::start(proxy_port)?;
 
             #[cfg(unix)]
             daemon::start(&state_dir, proxy_port)?;
         }
-        ProxyCommands::Stop(stop_args) => {
+        ProxyCommands::Stop(_) => {
             stop_proxy();
         }
     }

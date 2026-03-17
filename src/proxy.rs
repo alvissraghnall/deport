@@ -7,7 +7,7 @@ use crate::{
 use rama::{
     Context, Layer as _, Service,
     context::RequestContextExt,
-    graceful::{self, ShutdownGuard},
+    graceful::{ShutdownGuard},
     http::{
         Request, Response, StatusCode,
         client::EasyHttpWebClient,
@@ -28,7 +28,7 @@ use rama::{
     tls::rustls::server::{TlsAcceptorDataBuilder, TlsAcceptorLayer},
 };
 
-use tokio::sync::{Notify, oneshot};
+use tokio::sync::{oneshot};
 
 pub static PROXY_SHUTDOWN_TX: LazyLock<Mutex<Option<oneshot::Sender<()>>>> =
     LazyLock::new(|| Mutex::new(None));
