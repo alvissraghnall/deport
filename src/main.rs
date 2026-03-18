@@ -1,8 +1,9 @@
 use std::{sync::{Arc, LazyLock}};
 
 use dashmap::DashMap;
+use futures::executor;
 
-use crate::{commands::{Arguments, get::{handle_get}, list::handle_list, proxy::handle_proxy_command, run::handle_run, trust::handle_trust}, process_man::ProcessManager, routes::RouteManager, sni::load_ca, state::{ProxyState, app_data_dir, init_app_storage}};
+use crate::{commands::{Arguments, get::handle_get, list::handle_list, proxy::handle_proxy_command, run::handle_run, trust::handle_trust}, ipc::ClientIpcStream, process_man::ProcessManager, routes::RouteManager, sni::load_ca, state::{ProxyState, app_data_dir, init_app_storage}};
 
 mod process_man;
 
@@ -59,12 +60,19 @@ fn main() -> anyhow::Result<()> {
             let _ = handle_proxy_command(&cmd).await;
         }),
         commands::Commands::Run(mut run_args) => {
-            let _: anyhow::Result<()> = tokio::runtime::Runtime::new().unwrap().block_on(async {
-                let stream = ipc::client::IpcClient::connect(addr).await;
-                handle_run(&mut run_args, &mut stream?, &routes_manager_clone).await
-            });
+            // let _: anyhow::Result<()> = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            //     let stream = ipc::client::IpcClient::connect(addr).await;
+            //     handle_run(&mut run_args, &mut stream?, &routes_manager_clone).await
+            // });
             // let resp = ipc::client::IpcClient::send_request(stream, Request::Spawn {...}).await?;
-            // let _ = executor::block_on(handle_run(&run_args, &stream?));
+            let stream: std::io::Result<ClientIpcStream> = tokio::runtime::Runtime::new().unwrap().block_on(async {
+                ipc::client::IpcClient::connect(addr).await
+            });
+            match stream {
+                Ok(sni) => println!("{:?}", sni),
+                Err(e) => print!("{:?}", e),
+            }
+            // let _ = executor::block_on(handle_run(&mut run_args, &mut stream?, &routes_manager_clone));
         },
         commands::Commands::Hosts => todo!(),
         commands::Commands::Trust => handle_trust()?,

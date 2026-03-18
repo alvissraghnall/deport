@@ -7,6 +7,8 @@ use std::time::Duration;
 use std::{fs::File, path::Path};
 
 #[cfg(unix)]
+use anyhow::bail;
+#[cfg(unix)]
 use daemonize::Daemonize;
 
 #[cfg(windows)]
@@ -45,28 +47,47 @@ pub async fn run_server_components(proxy_port: Option<u16>) -> anyhow::Result<()
 pub fn start(path: &Path, proxy_port: Option<u16>) -> anyhow::Result<()> {
     let stdout = File::create("/tmp/deport.out").unwrap();
     let stderr = File::create("/tmp/deport.err").unwrap();
+    println!("{:?}", path);
 
     let daemonize = Daemonize::new()
-        .pid_file(Path::join(path, "deport.pid"))
+        .pid_file(path.join("deport.pid"))
+        // .pid_file("/tmp/deport.pid")
         .chown_pid_file(true)
         .working_directory(path)
         .stdout(stdout) // Redirect stdout to `/tmp/daemon.out`.
         .stderr(stderr);
 
     match daemonize.start() {
-        Ok(_) => println!("Success, daemonized"),
-        Err(e) => eprintln!("Error, {}", e),
+        Ok(_) => {
+            println!("Success, daemonized");
+
+            let rt = tokio::runtime::Runtime::new().unwrap();
+
+            rt.block_on(async move {
+                tokio::spawn(setup_unix_signal_handler());
+
+                if let Err(e) = run_server_components(proxy_port).await {
+                    eprintln!("Server error: {:?}", e);
+                }
+            });
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            bail!(e)
+        }
     }
 
-    // safe to spin up tokio runtime as process has forked in bg
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
-        tokio::spawn(async {
-            setup_unix_signal_handler().await;
-        });
+    println!("{:?}", "skiiiiii");
 
-        run_server_components(proxy_port).await
-    })?;
+    // safe to spin up tokio runtime as process has forked in bg
+    // let rt = tokio::runtime::Runtime::new().unwrap();
+    // rt.block_on(async {
+    //     tokio::spawn(async {
+    //         setup_unix_signal_handler().await;
+    //     });
+
+    //     run_server_components(proxy_port).await
+    // })?;
 
     Ok(())
 }

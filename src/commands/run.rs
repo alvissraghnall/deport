@@ -32,7 +32,8 @@ pub struct RunArgs {
     /// Process Command to run
     cmd: String,
 
-    /// args the process
+    /// args for the process command
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     args: Vec<String>,
 
     /// name for subdomain
@@ -45,7 +46,7 @@ pub struct RunArgs {
     #[arg(short, long)]
     port: Option<u16>,
 
-    #[arg(short, long)]
+    #[arg(long)]
     proxy_port: Option<u16>,
 
     #[arg(short, long, value_name="NAME=VALUE", value_parser = parse_key_val::<String, String>)]
@@ -55,9 +56,10 @@ pub struct RunArgs {
 pub async fn handle_run(args: &mut RunArgs, client: &mut ClientIpcStream, routes_manager: &RouteManager) -> Result<()> {
     let base_name: String;
 
-    if args.args.is_empty() {
-        return Ok(());
-    }
+    // if args.args.is_empty() {
+    //     return Ok(());
+    // }
+    println!("{:?}", args);
 
     if let Some(name) = &args.name {
         let sanitized = crate::cli_utils::sanitize_rfc1035(&name);
