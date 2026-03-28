@@ -108,9 +108,7 @@ pub async fn handle_run(args: &mut RunArgs, client: &mut ClientIpcStream, routes
 
             match crate::commands::proxy::handle_proxy_command(
                 &crate::commands::proxy::ProxyCommands::Start(proxy_start_args),
-            )
-            .await
-            {
+            ) {
                 Ok(()) => {
                     println!("{}", "Proxy started!".green());
                 }
@@ -169,6 +167,8 @@ pub async fn handle_run(args: &mut RunArgs, client: &mut ClientIpcStream, routes
     let request = Request::Spawn { config };
     
     let response = IpcClient::send_request(client, request).await?;
+    
+    println!("{:?}", response);
     
     if let Response::ProcessInfo(process_info) = response {
         println!("{}", format!("Process {} now running on port {} with PID: {}", process_info.name, process_info.port, process_info.pid).blue());

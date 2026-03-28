@@ -11,6 +11,11 @@ use anyhow::bail;
 #[cfg(unix)]
 use daemonize::Daemonize;
 
+#[cfg(unix)]
+use daemonizr::Daemonizr;
+#[cfg(unix)]
+use daemonizr::DaemonizrError;
+
 #[cfg(windows)]
 use std::ffi::OsString;
 #[cfg(windows)]
@@ -45,49 +50,151 @@ pub async fn run_server_components(proxy_port: Option<u16>) -> anyhow::Result<()
 
 #[cfg(unix)]
 pub fn start(path: &Path, proxy_port: Option<u16>) -> anyhow::Result<()> {
-    let stdout = File::create("/tmp/deport.out").unwrap();
-    let stderr = File::create("/tmp/deport.err").unwrap();
+    let stdout = daemonizr::Stdout::Redirect(path.join("daemon.out"));
+    let stderr = daemonizr::Stderr::Redirect(path.join("daemon.err"));
     println!("{:?}", path);
 
-    let daemonize = Daemonize::new()
-        .pid_file(path.join("deport.pid"))
-        // .pid_file("/tmp/deport.pid")
-        .chown_pid_file(true)
-        .working_directory(path)
-        .stdout(stdout) // Redirect stdout to `/tmp/daemon.out`.
-        .stderr(stderr);
+    let daemon = Daemonizr::new()
+        .work_dir(path.to_path_buf())
+        .expect("invalid path")
+        .pidfile(path.join("deport.pid"))
+        .stdout(stdout)
+        .stderr(stderr)
+        .umask(0o027)
+        .expect("invalid umask");
 
-    match daemonize.start() {
-        Ok(_) => {
-            println!("Success, daemonized");
-
-            let rt = tokio::runtime::Runtime::new().unwrap();
-
-            rt.block_on(async move {
-                tokio::spawn(setup_unix_signal_handler());
-
-                if let Err(e) = run_server_components(proxy_port).await {
-                    eprintln!("Server error: {:?}", e);
-                }
-            });
+    match daemon.spawn() {
+        Err(DaemonizrError::AlreadyRunning) => {
+            eprintln!("Daemon already running");
+            std::process::exit(1);
         }
         Err(e) => {
-            eprintln!("Error: {}", e);
-            bail!(e)
+            eprintln!("Daemonization error: {}", e);
+            std::process::exit(1);
+        }
+        Ok(()) => {
+            tokio::runtime::Runtime::new().unwrap().block_on(async {
+                tracing::info!("Daemon process started.");
+                let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(16);
+                tokio::spawn(signal_handler(shutdown_tx.clone()));
+                if let Err(e) = run_server(proxy_port, shutdown_tx.clone()).await {
+                    tracing::error!("Server exited with error: {:?}", e);
+                }
+                tracing::info!("Daemon exiting cleanly.");
+            });
+        }
+    }
+    Ok(())
+}
+
+async fn signal_handler(shutdown_tx: tokio::sync::broadcast::Sender<()>) {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+
+        let mut sigterm = signal(SignalKind::terminate()).unwrap();
+        let mut sigint = signal(SignalKind::interrupt()).unwrap();
+
+        tokio::select! {
+            _ = sigterm.recv() => tracing::info!("SIGTERM received"),
+            _ = sigint.recv() => tracing::info!("SIGINT received"),
         }
     }
 
-    println!("{:?}", "skiiiiii");
+    // notify all tasks
+    let _ = shutdown_tx.send(());
+}
 
-    // safe to spin up tokio runtime as process has forked in bg
-    // let rt = tokio::runtime::Runtime::new().unwrap();
-    // rt.block_on(async {
-    //     tokio::spawn(async {
-    //         setup_unix_signal_handler().await;
-    //     });
+pub async fn run_server(
+    proxy_port: Option<u16>,
+    shutdown_tx: tokio::sync::broadcast::Sender<()>,
+) -> anyhow::Result<()> {
+    tracing::info!("Initializing server components...");
 
-    //     run_server_components(proxy_port).await
-    // })?;
+    let state = crate::APP_STATE.clone();
+    let process_manager = crate::PROCESS_MANAGER.clone();
+
+    let mut shutdown_rx = shutdown_tx.subscribe();
+
+    println!("{:?}", "1");
+
+    let mut proxy_task = tokio::spawn({
+        let mut shutdown_rx = shutdown_tx.subscribe();
+        async move {
+            tokio::select! {
+                _ = crate::proxy::start_proxy(state, proxy_port) => {},
+                _ = shutdown_rx.recv() => {
+                    tracing::info!("Proxy shutting down");
+                }
+            }
+        }
+    });
+
+    let (tx, rx) = tokio::sync::mpsc::channel(100);
+
+    println!("{:?}", "2");
+
+    let mut worker_task = tokio::spawn({
+        let mut shutdown_rx = shutdown_tx.subscribe();
+        async move {
+            tokio::select! {
+                _ = crate::ipc::worker::worker_loop(rx, process_manager) => {},
+                _ = shutdown_rx.recv() => {
+                    tracing::info!("Worker shutting down");
+                }
+            }
+        }
+    });
+    println!("{:?}", "3");
+
+    let mut ipc_task = tokio::spawn({
+        let mut shutdown_rx = shutdown_tx.subscribe();
+        async move {
+            tokio::select! {
+                res = crate::ipc::run(tx) => res,
+                _ = shutdown_rx.recv() => {
+                    tracing::info!("IPC shutting down");
+                    Ok(())
+                }
+            }
+        }
+    });
+
+    println!("{:?}", "4");
+
+    tokio::select! {
+        _ = shutdown_rx.recv() => {
+            tracing::info!("Shutdown signal received, propagating to tasks...");
+        }
+        res = &mut proxy_task => {
+            match res {
+                Ok(_) => tracing::info!("Proxy task shut down gracefully."),
+                Err(e) => tracing::error!("Proxy task panicked: {:?}", e),
+            }
+            let _ = shutdown_tx.send(());
+        }
+        res = &mut worker_task => {
+            match res {
+                Ok(_) => tracing::info!("Worker task shut down gracefully."),
+                Err(e) => tracing::error!("Worker task panicked: {:?}", e),
+            }
+            let _ = shutdown_tx.send(());
+        }
+        res = &mut ipc_task => {
+            match res {
+                Ok(_) => tracing::info!("IPC task shut down gracefully."),
+                Err(e) => tracing::error!("IPC task panicked: {:?}", e),
+            }
+            let _ = shutdown_tx.send(());
+        }
+    }
+
+    // Wait for all tasksksksks to finish before returning
+    let _ = proxy_task.await;
+    let _ = worker_task.await;
+    let _ = ipc_task.await;
+
+    tracing::info!("All daemon tasks shut down.");
 
     Ok(())
 }

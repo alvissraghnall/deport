@@ -56,22 +56,22 @@ fn main() -> anyhow::Result<()> {
     let args = <Arguments as clap::Parser>::parse();
 
     match args.command {
-        commands::Commands::Proxy(cmd) => tokio::runtime::Runtime::new().unwrap().block_on(async {
-            let _ = handle_proxy_command(&cmd).await;
-        }),
+        commands::Commands::Proxy(cmd) => {
+            let _ = handle_proxy_command(&cmd);
+        }
         commands::Commands::Run(mut run_args) => {
-            // let _: anyhow::Result<()> = tokio::runtime::Runtime::new().unwrap().block_on(async {
-            //     let stream = ipc::client::IpcClient::connect(addr).await;
-            //     handle_run(&mut run_args, &mut stream?, &routes_manager_clone).await
-            // });
-            // let resp = ipc::client::IpcClient::send_request(stream, Request::Spawn {...}).await?;
-            let stream: std::io::Result<ClientIpcStream> = tokio::runtime::Runtime::new().unwrap().block_on(async {
-                ipc::client::IpcClient::connect(addr).await
+            let _: anyhow::Result<()> = tokio::runtime::Runtime::new().unwrap().block_on(async {
+                let stream = ipc::client::IpcClient::connect(addr).await;
+                handle_run(&mut run_args, &mut stream?, &routes_manager_clone).await
             });
-            match stream {
-                Ok(sni) => println!("{:?}", sni),
-                Err(e) => print!("{:?}", e),
-            }
+            // let resp = ipc::client::IpcClient::send_request(stream, Request::Spawn {...}).await?;
+            // let stream: std::io::Result<ClientIpcStream> = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            //     ipc::client::IpcClient::connect(addr).await
+            // });
+            // match stream {
+            //     Ok(sni) => println!("{:?}", sni),
+            //     Err(e) => print!("{:?}", e),
+            // }
             // let _ = executor::block_on(handle_run(&mut run_args, &mut stream?, &routes_manager_clone));
         },
         commands::Commands::Hosts => todo!(),

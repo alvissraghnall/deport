@@ -64,9 +64,10 @@ impl ProcessManager {
     }
 
     pub async fn stop_all(&self) {
-        let _ = self.processes.iter().map(async |proc| {
+        for proc in self.processes.iter() {
+            // Errors on already-stopped processes are expected and can be ignored.
             let _ = proc.value().kill().await;
-        });
+        }
     }
 }
 

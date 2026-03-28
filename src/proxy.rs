@@ -210,35 +210,25 @@ pub(crate) async fn start_proxy(state: SharedState, port: Option<u16>) {
         .expect("graceful shutdown");
 }
 
-pub(crate) async fn is_proxy_running(port: Option<u16>, tls: Option<bool>) -> bool {
-    let http = match tls {
-        Some(true) => "https",
-        Some(false) => "http",
-        None => "http",
-    };
+pub(crate) async fn is_proxy_running(_port: Option<u16>, _tls: Option<bool>) -> bool {
+    #[cfg(unix)]
+    let addr = "/tmp/deport.sock";
 
-    let port = port.unwrap_or(get_default_proxy_port());
+    #[cfg(windows)]
+    let addr = r"\\.\pipe\deport";
 
-    let client = EasyHttpWebClient::default();
-    let ctx = Context::default();
-    let req = Request::builder()
-        .method("HEAD")
-        .uri(format!("{}://127.0.0.1:{}/", http, port))
-        .body("".into())
-        .unwrap();
-
-    match client.execute(ctx, req).await {
-        Ok(body) => {
-            let deport_flag = body.headers().get("x-deport");
-            match deport_flag {
-                Some(flag) if flag.to_str().unwrap() == "1" => {
-                    tracing::info!("Proxy is running");
-                    return true;
-                }
-                None => false,
-                _ => false,
+    match crate::ipc::client::IpcClient::connect(addr).await {
+        Ok(_) => {
+            tracing::info!("Proxy is running (IPC connected)");
+            true
+        }
+        Err(e) => {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                tracing::info!("Proxy is running (IPC owned by another user)");
+                true
+            } else {
+                false
             }
         }
-        Err(_) => false,
     }
 }

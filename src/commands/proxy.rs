@@ -3,7 +3,7 @@ use clap::{Args, Subcommand};
 use colored::Colorize as _;
 
 use crate::daemon;
-use crate::{process_man::get_default_proxy_port, proxy::{is_proxy_running, stop_proxy}, trust_ca::{is_ca_trusted}};
+use crate::{process_man::get_default_proxy_port, proxy::is_proxy_running, trust_ca::{is_ca_trusted}};
 
 #[derive(Subcommand, Debug)]
 pub enum ProxyCommands {
@@ -46,14 +46,22 @@ impl StopArgs {
     }
 }
 
-pub async fn handle_proxy_command(cmd: &ProxyCommands) -> Result<()> {
+pub fn handle_proxy_command(cmd: &ProxyCommands) -> Result<()> {
     let state_dir = crate::state::app_data_dir();
     match cmd {
         ProxyCommands::Start(start_args) => {
             let proxy_port = start_args.port;
             let https = start_args.use_https;
 
-            if is_proxy_running(proxy_port, https).await {
+            let is_running = std::thread::spawn(move || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(is_proxy_running(proxy_port, https))
+            }).join().unwrap();
+
+            if is_running {
                 let proxy_port = proxy_port.unwrap_or_else(|| get_default_proxy_port());
                 let sudo_pfix = if proxy_port < 1024 { "sudo" } else { "" };
                 let port_flag = if proxy_port != get_default_proxy_port() {
@@ -62,7 +70,7 @@ pub async fn handle_proxy_command(cmd: &ProxyCommands) -> Result<()> {
                     String::new()
                 };
 
-                println!("{}", format!("Proxy is already running on port {}", proxy_port).bright_yellow());
+                println!("{}", format!("Proxy is already running on port {}", proxy_port).yellow());
                 println!("{}", format!("To restart: {} deport proxy stop{} && {} deport proxy start{}", sudo_pfix, port_flag, sudo_pfix, port_flag).blue());
                 bail!("Proxy is already running on port {}", proxy_port);
             }
@@ -93,7 +101,35 @@ pub async fn handle_proxy_command(cmd: &ProxyCommands) -> Result<()> {
             daemon::start(&state_dir, proxy_port)?;
         }
         ProxyCommands::Stop(_) => {
-            stop_proxy();
+            let is_stopped = std::thread::spawn(move || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(async {
+                        #[cfg(unix)]
+                        let addr = "/tmp/deport.sock";
+
+                        #[cfg(windows)]
+                        let addr = r"\\.\pipe\deport";
+
+                        match crate::ipc::client::IpcClient::connect(addr).await {
+                            Ok(stream) => {
+                                match crate::ipc::client::IpcClient::send_request(stream, crate::ipc::Request::KillDaemon).await {
+                                    Ok(crate::ipc::Response::Ok { message }) => Ok(message),
+                                    Ok(crate::ipc::Response::Error { message }) => Err(anyhow::anyhow!("Daemon error: {}", message)),
+                                    _ => Err(anyhow::anyhow!("Unexpected response from daemon")),
+                                }
+                            }
+                            Err(_) => Err(anyhow::anyhow!("Proxy is not running.")),
+                        }
+                    })
+            }).join().unwrap();
+
+            match is_stopped {
+                Ok(msg) => println!("{}", msg.green()),
+                Err(e) => println!("{}", e.to_string().yellow()),
+            }
         }
     }
 

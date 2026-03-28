@@ -7,8 +7,9 @@ mod windows_client;
 #[cfg(target_family = "unix")]
 mod unix;
 
-use std::{io, sync::Arc};
+use std::{io::{self, ErrorKind}, sync::Arc};
 
+use anyhow::bail;
 use rkyv::{Archive, Deserialize, Serialize, from_bytes, rancor, to_bytes};
 
 #[cfg(target_os = "windows")]
@@ -81,6 +82,12 @@ impl Request {
             },
             Request::KillDaemon => {
                 process_man.stop_all().await;
+                
+                tokio::spawn(async {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    crate::proxy::stop_proxy();
+                });
+
                 Response::Ok {
                     message: "Daemon killed successfully".into(),
                 }
@@ -103,23 +110,25 @@ pub async fn run(tx: mpsc::Sender<WorkItem>) -> std::io::Result<()> {
 
         let tx = tx.clone();
 
+        println!("{:?}", tx);
+
         tokio::spawn(async move {
             if let Err(e) = handle_client(&mut stream, tx).await {
-                eprintln!("Connection error: {}", e);
+                eprintln!("[IPC] Connection error: {}", e);
             }
         });
     }
 }
 
-async fn handle_client<T>(mut stream: T, tx: Sender<WorkItem>) -> io::Result<()>
+async fn handle_client<T>(mut stream: T, tx: Sender<WorkItem>) -> anyhow::Result<()>
 where
     T: AsyncReadExt + AsyncWriteExt + Unpin,
 {
     loop {
         let msg_len = match stream.read_u32().await {
-            Ok(0) => return Ok(()),
             Ok(n) => n as usize,
-            Err(e) => return Err(e),
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(()),
+            Err(e) => bail!(e),
         };
 
         let mut buf = vec![0u8; msg_len];
@@ -133,7 +142,7 @@ where
         let work = WorkItem::new(request, resp_tx);
 
         if tx.send(work).await.is_err() {
-            return Ok(());
+            bail!("Unable to send work!");
         }
 
         if let Ok(resp) = resp_rx.await {
