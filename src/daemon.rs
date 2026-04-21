@@ -1,15 +1,10 @@
+#[cfg(unix)]
+use std::path::Path;
 use std::sync::{
     Arc, LazyLock,
     atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
-#[cfg(unix)]
-use std::{fs::File, path::Path};
-
-#[cfg(unix)]
-use anyhow::bail;
-#[cfg(unix)]
-use daemonize::Daemonize;
 
 #[cfg(unix)]
 use daemonizr::Daemonizr;
@@ -31,6 +26,7 @@ use windows_service::{
 
 static SHUTDOWN: LazyLock<Arc<AtomicBool>> = LazyLock::new(|| Arc::new(AtomicBool::new(false)));
 
+#[allow(dead_code)]
 pub async fn run_server_components(proxy_port: Option<u16>) -> anyhow::Result<()> {
     tracing::info!("Initializing server components...");
 
@@ -202,7 +198,7 @@ pub async fn run_server(
 /// WE ARE NOT PASSING PROXY_PORT INTO WINDOWS SERVICE YET COS I CAN'T FIGURE IT OUT
 /// RN, JAJAJAJAJAJAJAJAJAJAJAJAJAJAJAJAJAJAJAAJAAJAJJAJAAJA
 
-#[cfg(unix)]
+#[cfg_attr(unix, allow(dead_code))]
 async fn setup_unix_signal_handler() {
     let signal_shutdown = SHUTDOWN.clone();
 

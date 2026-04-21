@@ -18,7 +18,7 @@ use rama::{
         },
         matcher::MethodMatcher,
         server::HttpServer,
-        service::{client::HttpClientExt, web::response::IntoResponse as _},
+        service::{web::response::IntoResponse as _},
     },
     layer::ConsumeErrLayer,
     net::{http::RequestContext, stream::ClientSocketInfo, tls::server::SelfSignedData},

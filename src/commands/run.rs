@@ -1,4 +1,4 @@
-use std::{env::current_dir, io, str::FromStr, sync::Arc};
+use std::{env::current_dir, io, str::FromStr};
 
 use anyhow::{Context, Result, bail};
 use clap::Args;
@@ -6,7 +6,7 @@ use colored::Colorize as _;
 use rand::RngExt as _;
 
 use crate::{
-    cli_utils::{inject_framework_flags}, commands::proxy::StartArgs, ipc::{ClientIpcStream, Request, Response, client::IpcClient}, process_man::{ProcessConfig, get_default_proxy_port, get_free_port}, proxy::is_proxy_running, routes::{Route, RouteManager}
+    cli_utils::{inject_framework_flags}, commands::proxy::StartArgs, ipc::{Request, Response, client::IpcClient}, process_man::{ProcessConfig, get_default_proxy_port, get_free_port}, proxy::is_proxy_running, routes::{Route}
 };
 
 /// Parse a single key-value pair
@@ -53,13 +53,8 @@ pub struct RunArgs {
     env: Option<std::vec::Vec<(String, String)>>,
 }
 
-pub async fn handle_run(args: &mut RunArgs, client: &mut ClientIpcStream, routes_manager: &RouteManager) -> Result<()> {
+pub async fn handle_run(addr: &str, args: &mut RunArgs) -> Result<()> {
     let base_name: String;
-
-    // if args.args.is_empty() {
-    //     return Ok(());
-    // }
-    println!("{:?}", args);
 
     if let Some(name) = &args.name {
         let sanitized = crate::cli_utils::sanitize_rfc1035(&name);
@@ -110,7 +105,8 @@ pub async fn handle_run(args: &mut RunArgs, client: &mut ClientIpcStream, routes
                 &crate::commands::proxy::ProxyCommands::Start(proxy_start_args),
             ) {
                 Ok(()) => {
-                    println!("{}", "Proxy started!".green());
+                    println!("{}", "Proxy started! Waiting for it to initialize...".yellow());
+                    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
                 }
                 Err(e) => {
                     println!("{}", "Failed to start proxy!".bright_red());
@@ -123,6 +119,9 @@ pub async fn handle_run(args: &mut RunArgs, client: &mut ClientIpcStream, routes
     } else {
         println!("{}", "Proxy is already running...".yellow());
     }
+
+    let mut client = IpcClient::connect(addr).await
+        .context("Failed to connect to deport daemon. Is it running? Try `deport proxy start`.")?;
 
     if args.port.is_some() {
         println!("{}", format!("Using custom port: {}", args.port.unwrap()).bright_green())
@@ -139,22 +138,6 @@ pub async fn handle_run(args: &mut RunArgs, client: &mut ClientIpcStream, routes
 
     println!("{}", format!("Running PORT={} HOST={} {:?}", port, "0.0.0.0", args.cmd.as_str().to_owned() + " " + &args.args.join(" ")).bright_cyan());
     
-    // let cmd_env = match &mut args.env {
-    //     Some(args) => {
-    //         let mut _args = Vec::new();
-    //         _args.push("HOST=127.0.0.1".to_string());
-    //         _args.push(format!("PORT={}", port));
-    //         args.iter().map(|v| _args.push(v.clone()));
-    //         Some(_args)
-    //     },
-    //     None => {
-    //         let mut _args = Vec::new();
-    //         _args.push("HOST=127.0.0.1".to_string());
-    //         _args.push(format!("PORT={}", port));
-    //         args.env.replace(_args)
-    //     },
-    // };
-    
     let config = ProcessConfig {
         name: base_name.clone(),
         command: args.cmd.clone(),
@@ -165,10 +148,8 @@ pub async fn handle_run(args: &mut RunArgs, client: &mut ClientIpcStream, routes
     };
 
     let request = Request::Spawn { config };
-    
-    let response = IpcClient::send_request(client, request).await?;
-    
-    println!("{:?}", response);
+
+    let response = IpcClient::send_request(&mut client, request).await?;
     
     if let Response::ProcessInfo(process_info) = response {
         println!("{}", format!("Process {} now running on port {} with PID: {}", process_info.name, process_info.port, process_info.pid).blue());
@@ -178,9 +159,22 @@ pub async fn handle_run(args: &mut RunArgs, client: &mut ClientIpcStream, routes
         };
         
         let host = format!("{}.localhost", base_name.as_str());
-        routes_manager.insert(Arc::from(host), route);
-    }
-    // let final_url = format_url(&base_name, args.proxy_port, true);
 
+        let insert_request = Request::AddRoute { hostname: host.clone(), route };
+        let insert_response = IpcClient::send_request(&mut client, insert_request).await?;
+
+        if let Response::Ok { message } = insert_response {
+            println!("{}", message.green());
+        } else {
+            println!("{}", "Failed to add route!".bright_red());
+        }
+
+        println!("{}", format!("Route added for {}.localhost -> {}", base_name.as_str(), process_info.port).green());
+    }
+    else if let Response::Error { message } = response {
+        println!("{}", format!("Failed to start process: {}", message).bright_red());
+    } else {
+        println!("{}", "Unexpected response from daemon".bright_red());
+    }
     Ok(())
 }

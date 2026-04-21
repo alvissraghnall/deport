@@ -6,16 +6,25 @@ use rama::tls::rustls::dep::rustls::ServerConfig;
 use tokio::sync::OnceCell;
 use std::fs;
 use std::path::PathBuf;
-
-use std::sync::{Arc};
+use std::sync::{atomic::{AtomicU16, Ordering}, Arc};
 
 use crate::routes::RouteManager;
+
+pub(crate) trait AppStateTrait {
+    fn get_routes(&self) -> Arc<RouteManager>;
+    fn get_ca_cert(&self) -> &X509;
+    fn get_ca_key(&self) -> &PKey<Private>;
+    fn get_tls_cache(&self) -> &DashMap<String, Arc<OnceCell<ServerConfig>>>;
+    fn get_proxy_port(&self) -> u16;
+    fn set_proxy_port(&self, port: u16);
+}
 
 pub(crate) struct ProxyState {
     pub routes: Arc<RouteManager>,
     pub ca_cert: X509,
     pub ca_key: PKey<Private>,
-    pub tls_cache: DashMap<String, Arc<OnceCell<ServerConfig>>>
+    pub tls_cache: DashMap<String, Arc<OnceCell<ServerConfig>>>,
+    pub proxy_port: AtomicU16,
 }
 
 pub(crate) type SharedState = Arc<ProxyState>;
@@ -41,11 +50,28 @@ pub(crate) fn init_app_storage() -> std::io::Result<()> {
     Ok(())
 }
 
-// Ransom, Boldy James, Nicholas Craven - Salvation For The Wicked
-// Ras Kass - Leopard Eats Face
-// Herc Cut The Lights - SSG'98
-// Sasha Keable - Act II
-// Chris Crack - Too Late To Start Following The Rules Now
-// Jill Scott - To Whom This May Concern
-// Boldy James, Nicholas Craven - Manhunt
-// 
+impl AppStateTrait for ProxyState {
+    fn get_routes(&self) -> Arc<RouteManager> {
+        self.routes.clone()
+    }
+
+    fn get_ca_cert(&self) -> &X509 {
+        &self.ca_cert
+    }
+
+    fn get_ca_key(&self) -> &PKey<Private> {
+        &self.ca_key
+    }
+
+    fn get_tls_cache(&self) -> &DashMap<String, Arc<OnceCell<ServerConfig>>> {
+        &self.tls_cache
+    }
+
+    fn get_proxy_port(&self) -> u16 {
+        self.proxy_port.load(Ordering::Relaxed)
+    }
+
+    fn set_proxy_port(&self, port: u16) {
+        self.proxy_port.store(port, Ordering::Relaxed);
+    }
+}

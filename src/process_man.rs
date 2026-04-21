@@ -2,11 +2,13 @@ use std::io;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::time::Duration;
 
 use dashmap::DashMap;
 use rkyv::{Archive, Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
+use tokio::net::TcpStream;
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 
@@ -29,7 +31,55 @@ impl ProcessManager {
     }
 
     pub async fn spawn(&self, config: ProcessConfig) -> io::Result<ProcessInfo> {
+        let should_check_port = config.port.is_some();
         let process = Process::spawn(config).await?;
+
+        if should_check_port {
+            let port = process.port;
+            let start = std::time::Instant::now();
+            let timeout = Duration::from_secs(19);
+
+            loop {
+                if !process.is_running() {
+                    let info = process.info().await;
+                    let exit_code_str = info.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "unknown".to_string());
+                    return Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("Process '{}' exited prematurely with code {}. Check daemon logs for details.", process.name, exit_code_str),
+                    ));
+                }
+
+                if TcpStream::connect(format!("127.0.0.1:{}", port)).await.is_ok() {
+                    // connected, process is up.
+                    break;
+                }
+
+                if start.elapsed() > timeout {
+                    let _ = process.kill().await;
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        format!("Process '{}' failed to listen on port {} within {} seconds.", process.name, port, timeout.as_secs()),
+                    ));
+                }
+
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+        } else {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            if !process.is_running() && process.get_state() != ProcessState::Exited {
+                let info = process.info().await;
+                let exit_code_str = info.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "unknown".to_string());
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("Process '{}' exited prematurely with code {}. Check daemon logs for details.", process.name, exit_code_str),
+                ));
+            } else if process.get_state() == ProcessState::Exited {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("Process '{}' exited with code {}", process.name, process.exit_code.lock().await.unwrap_or(1)),
+                ));
+            }
+        }
 
         let process_name = process.name.as_str();
         let info = process.info().await;
@@ -59,6 +109,7 @@ impl ProcessManager {
         proc.kill().await
     }
 
+    #[allow(dead_code)]
     pub async fn cleanup(&self) {
         self.processes.retain(|_, proc| proc.is_running());
     }
@@ -70,8 +121,6 @@ impl ProcessManager {
         }
     }
 }
-
-pub type SharedManager = Arc<ProcessManager>;
 
 #[derive(Debug, Clone, Archive, Serialize, Deserialize, )]
 pub struct ProcessConfig {
@@ -111,19 +160,12 @@ pub struct Process {
     // Inner shared state
     state: Arc<AtomicU8>,
     exit_code: Arc<Mutex<Option<i32>>>,
-    logs: ProcessLogs,
 
     // Channel to send commands to the supervisor task
     cmd_tx: mpsc::Sender<SupervisorCommand>,
 
     // Handle to the supervisor task (used for awaiting shutdown)
     supervisor: Arc<Mutex<Option<JoinHandle<()>>>>,
-}
-
-#[derive(Clone, Default)]
-struct ProcessLogs {
-    stdout: Arc<Mutex<String>>,
-    stderr: Arc<Mutex<String>>,
 }
 
 enum SupervisorCommand {
@@ -167,7 +209,6 @@ impl Process {
 
         let state = Arc::new(AtomicU8::new(STATE_RUNNING));
         let exit_code = Arc::new(Mutex::new(None));
-        let logs = ProcessLogs::default();
 
         let (cmd_tx, cmd_rx) = mpsc::channel::<SupervisorCommand>(1);
 
@@ -176,7 +217,6 @@ impl Process {
             pid,
             state.clone(),
             exit_code.clone(),
-            logs.clone(),
             cmd_rx,
         );
 
@@ -186,7 +226,6 @@ impl Process {
             port,
             state,
             exit_code,
-            logs,
             cmd_tx,
             supervisor: Arc::new(Mutex::new(Some(supervisor))),
         })
@@ -197,39 +236,16 @@ impl Process {
         pid: u32,
         state: Arc<AtomicU8>,
         exit_code: Arc<Mutex<Option<i32>>>,
-        logs: ProcessLogs,
         mut cmd_rx: mpsc::Receiver<SupervisorCommand>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
-            // Take streams
-            let mut stdout = child.stdout.take().expect("stdout missing");
-            let mut stderr = child.stderr.take().expect("stderr missing");
-
-            // Log Drainer Tasks
-            let log_out = logs.stdout.clone();
-            let out_task = tokio::spawn(async move {
-                let mut lines = BufReader::new(&mut stdout).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    println!("[{}] OUT: {}", pid, line);
-                    log_out.lock().await.push_str(&line);
-                    log_out.lock().await.push('\n');
-                }
-            });
-
-            let log_err = logs.stderr.clone();
-            let err_task = tokio::spawn(async move {
-                let mut lines = BufReader::new(&mut stderr).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    eprintln!("[{}] ERR: {}", pid, line);
-                    log_err.lock().await.push_str(&line);
-                    log_err.lock().await.push('\n');
-                }
-            });
+            let mut stdout_reader = BufReader::new(child.stdout.take().expect("stdout missing")).lines();
+            let mut stderr_reader = BufReader::new(child.stderr.take().expect("stderr missing")).lines();
 
             // Main Supervisor Loop
             loop {
                 tokio::select! {
-                    // Priority 1: Check for death
+                    // check for death
                     result = child.wait() => {
                         // Process Died
                         match result {
@@ -251,7 +267,7 @@ impl Process {
                         break;
                     }
 
-                    // Priority 2: Check for Kill Command
+                    // check for Kill Command
                     Some(cmd) = cmd_rx.recv() => {
                         match cmd {
                             SupervisorCommand::Kill => {
@@ -272,11 +288,24 @@ impl Process {
                             }
                         }
                     }
+
+                    // drain logs
+                    Ok(Some(line)) = stdout_reader.next_line() => {
+                        println!("[{}] OUT: {}", pid, line);
+                    },
+                    Ok(Some(line)) = stderr_reader.next_line() => {
+                        eprintln!("[{}] ERR: {}", pid, line);
+                    },
                 }
             }
 
-            // Cleanup: Wait for log tasks to finish
-            let _ = tokio::try_join!(out_task, err_task);
+            // Drain any remaining logs after process exit
+            while let Ok(Some(line)) = stdout_reader.next_line().await {
+                println!("[{}] OUT: {}", pid, line);
+            }
+            while let Ok(Some(line)) = stderr_reader.next_line().await {
+                eprintln!("[{}] ERR: {}", pid, line);
+            }
         })
     }
 
@@ -298,14 +327,6 @@ impl Process {
         *self.exit_code.lock().await
     }
 
-    pub async fn get_stdout(&self) -> String {
-        self.logs.stdout.lock().await.clone()
-    }
-
-    pub async fn get_stderr(&self) -> String {
-        self.logs.stderr.lock().await.clone()
-    }
-
     /// Initiates a graceful stop of the process by sending a kill command to the supervisor.
     pub async fn kill(&self) -> io::Result<()> {
         if !self.is_running() {
@@ -323,6 +344,7 @@ impl Process {
 
     /// Waits for the process to terminate completely.
     /// Consumes the handle to ensure no double-wait.
+    #[allow(dead_code)]
     pub async fn wait(self) -> io::Result<ProcessInfo> {
         let handle = self.supervisor.lock().await.take();
 
@@ -400,6 +422,7 @@ impl Process {
 
     /// Registers signal handlers and waits for a signal that
     /// indicates a shutdown request.
+    #[allow(dead_code)]
     pub(crate) async fn wait_for_signal(&self) {
         self.wait_for_signal_impl().await
     }
@@ -474,7 +497,6 @@ mod tests {
 
         assert_eq!(info.exit_code, Some(0));
 
-        // we cannot check logs after `wait()` because `proc` is consumed.
     }
 
     #[tokio::test]

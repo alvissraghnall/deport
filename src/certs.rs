@@ -1,20 +1,24 @@
 use std::{
-    sync::Arc, time::{Duration, SystemTime}
+    time::{Duration, SystemTime},
 };
 
-use rama::{error::OpaqueError, tls::{boring::core::{
-    asn1::{Asn1Integer, Asn1Time, Asn1TimeRef},
-    bn::{BigNum, MsbOption},
-    error::ErrorStack,
-    hash::MessageDigest,
-    nid::Nid,
-    pkey::{Id, PKey, PKeyRef, Private},
-    rsa::Rsa,
-    x509::{
-        X509, X509NameBuilder, X509Ref, X509Req, X509ReqBuilder,
-        extension::{self, SubjectKeyIdentifier},
+use rama::{
+    tls::{
+        boring::core::{
+            asn1::{Asn1Integer, Asn1Time, Asn1TimeRef},
+            bn::{BigNum, MsbOption},
+            error::ErrorStack,
+            hash::MessageDigest,
+            nid::Nid,
+            pkey::{Id, PKey, PKeyRef, Private},
+            rsa::Rsa,
+            x509::{
+                X509, X509NameBuilder, X509Ref, X509Req, X509ReqBuilder,
+                extension::{self, SubjectKeyIdentifier},
+            },
+        },
     },
-}, rustls::dep::{pki_types::{CertificateDer, PrivateKeyDer}, rustls::{crypto::aws_lc_rs, sign::CertifiedKey}}}};
+};
 
 // const CA_KEY_FILE: &str = "ca-key.pem";
 // const CA_CERT_FILE: &str = "ca.pem";
@@ -23,7 +27,7 @@ use rama::{error::OpaqueError, tls::{boring::core::{
 const SERVER_VALIDITY_DAYS: u32 = 365;
 
 /** Buffer (in ms) subtracted from expiry to trigger early regeneration. */
-const EXPIRY_BUFFER_MS: i64 = 7 * 24 * 60 * 60 * 1000; // 7 days
+// const EXPIRY_BUFFER_MS: i64 = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 const CA_COMMON_NAME: &str = "DEPORT LOCAL CA";
 
@@ -31,19 +35,19 @@ const CA_COMMON_NAME: &str = "DEPORT LOCAL CA";
 
 const CA_VALIDITY_DAYS: u32 = 3650;
 
-fn is_cert_expired(cert: &X509Ref) -> bool {
-    // if let Ok(cert_data) = std::fs::read(cert_path) {
-    // if let Ok(cert) = X509::from_pem(&cert_data) {
-    let now = std::time::SystemTime::now();
-    if let Ok(not_after) = asn1_time_to_system_time(cert.not_after()) {
-        if let Ok(duration_until_expiry) = not_after.duration_since(now) {
-            return duration_until_expiry.as_millis() < EXPIRY_BUFFER_MS as u128;
-        }
-    }
-    // }
-    // }
-    true
-}
+// fn is_cert_expired(cert: &X509Ref) -> bool {
+//     // if let Ok(cert_data) = std::fs::read(cert_path) {
+//     // if let Ok(cert) = X509::from_pem(&cert_data) {
+//     let now = std::time::SystemTime::now();
+//     if let Ok(not_after) = asn1_time_to_system_time(cert.not_after()) {
+//         if let Ok(duration_until_expiry) = not_after.duration_since(now) {
+//             return duration_until_expiry.as_millis() < EXPIRY_BUFFER_MS as u128;
+//         }
+//     }
+//     // }
+//     // }
+//     true
+// }
 
 pub fn generate_ca_cert() -> Result<(X509, PKey<Private>), ErrorStack> {
     let ca_key = Rsa::generate(2048)?;
@@ -114,6 +118,7 @@ pub fn generate_ca_cert() -> Result<(X509, PKey<Private>), ErrorStack> {
     // Ok(())
 }
 
+#[allow(dead_code)]
 pub fn fix_ownership(paths: Vec<&str>) -> std::io::Result<()> {
     for path in paths {
         #[cfg(unix)]
@@ -134,6 +139,7 @@ pub fn fix_ownership(paths: Vec<&str>) -> std::io::Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn asn1_time_to_system_time(time: &Asn1TimeRef) -> Result<SystemTime, ErrorStack> {
     let unix_time = Asn1Time::from_unix(0)?.diff(time)?;
     Ok(SystemTime::UNIX_EPOCH
@@ -268,6 +274,7 @@ fn generate_server_cert(
 }
 
 /// Verify that this cert was issued by this ca
+#[allow(dead_code)]
 fn verify_cert(ca_cert: &X509Ref, cert: &X509Ref) -> bool {
     match ca_cert.issued(&cert) {
         Ok(_) => true,
@@ -275,6 +282,7 @@ fn verify_cert(ca_cert: &X509Ref, cert: &X509Ref) -> bool {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn is_cert_strong(cert: &X509Ref) -> bool {
     let sig_nid = cert.signature_algorithm().object().nid();
 
@@ -341,25 +349,26 @@ pub(crate) fn generate_cert_for_host(
     generate_server_cert(ca_cert, ca_key, hosts)
 }
 
+// pub fn bridge_boring_to_rustls(
+//     cert: &X509,
+//     key: &PKey<Private>,
+// ) -> Result<CertifiedKey, OpaqueError> {
+//     let cert_der = cert.to_der().map_err(|e| OpaqueError::from_std(e))?;
+//     let key_der = key
+//         .private_key_to_der()
+//         .map_err(|e| OpaqueError::from_std(e))?;
 
-pub fn bridge_boring_to_rustls(
-    cert: &X509,
-    key: &PKey<Private>,
-) -> Result<CertifiedKey, OpaqueError> {
-    let cert_der = cert.to_der().map_err(|e| OpaqueError::from_std(e))?;
-    let key_der = key.private_key_to_der().map_err(|e| OpaqueError::from_std(e))?;
+//     let cert_chain = vec![CertificateDer::from(cert_der)];
 
-    let cert_chain = vec![CertificateDer::from(cert_der)];
-    
-    let private_key = PrivateKeyDer::try_from(key_der)
-        .map_err(|e| OpaqueError::from_display(format!("key conversion error: {}", e)))?;
+//     let private_key = PrivateKeyDer::try_from(key_der)
+//         .map_err(|e| OpaqueError::from_display(format!("key conversion error: {}", e)))?;
 
-    let provider = Arc::new(aws_lc_rs::default_provider());
-    
-    let signing_key = provider
-        .key_provider
-        .load_private_key(private_key)
-        .map_err(|e| OpaqueError::from_display(format!("load key error: {}", e)))?;
+//     let provider = Arc::new(aws_lc_rs::default_provider());
 
-    Ok(CertifiedKey::new(cert_chain, signing_key))
-}
+//     let signing_key = provider
+//         .key_provider
+//         .load_private_key(private_key)
+//         .map_err(|e| OpaqueError::from_display(format!("load key error: {}", e)))?;
+
+//     Ok(CertifiedKey::new(cert_chain, signing_key))
+// }

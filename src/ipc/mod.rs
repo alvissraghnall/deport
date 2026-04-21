@@ -7,7 +7,7 @@ mod windows_client;
 #[cfg(target_family = "unix")]
 mod unix;
 
-use std::{io::{self, ErrorKind}, sync::Arc};
+use std::{io::{self}, sync::Arc};
 
 use anyhow::bail;
 use rkyv::{Archive, Deserialize, Serialize, from_bytes, rancor, to_bytes};
@@ -30,8 +30,7 @@ use tokio::{
 };
 
 use crate::{
-    ipc::worker::WorkItem,
-    process_man::{ProcessConfig, ProcessInfo, ProcessManager},
+    APP_STATE, ipc::worker::WorkItem, process_man::{ProcessConfig, ProcessInfo, ProcessManager}, state::AppStateTrait
 };
 
 trait IpcListenerTrait {
@@ -50,6 +49,11 @@ pub(crate) enum Request {
     List,
     Stop { name: String },
     KillDaemon,
+    AddRoute { hostname: String, route: crate::routes::Route },
+    ListRoutes,
+    GetRoute { hostname: String },
+    DeleteRoute { hostname: String },
+    SetProxyPort(u16),
 }
 
 #[derive(Debug, Serialize, Deserialize, Archive)]
@@ -58,6 +62,8 @@ pub(crate) enum Response {
     ProcessInfo(ProcessInfo),
     Error { message: String },
     Ok { message: String },
+    Routes { routes: Vec<(String, crate::routes::Route)> },
+    Route(Option<crate::routes::Route>),
 }
 
 impl Request {
@@ -92,6 +98,26 @@ impl Request {
                     message: "Daemon killed successfully".into(),
                 }
             }
+            Request::AddRoute { hostname, route } => {
+                APP_STATE.routes.insert(Arc::from(hostname.clone()), route);
+                return Response::Ok { message: format!("Route {} added successfully!", hostname) }
+            },
+            Request::ListRoutes => {
+                let routes = APP_STATE.routes.list();
+                return Response::Routes { routes };
+            }
+            Request::DeleteRoute { hostname } => {
+                APP_STATE.routes.remove(&hostname);
+                return Response::Ok { message: format!("Route {} deleted successfully!", hostname) }
+            }
+            Request::SetProxyPort(port) => {
+                APP_STATE.set_proxy_port(port);
+                return Response::Ok { message: format!("Proxy port set to {} successfully!", port) }
+            },
+            Request::GetRoute { hostname } => {
+                let route = APP_STATE.routes.get(hostname.as_str());
+                return Response::Route(route);
+            },
         }
     }
 }

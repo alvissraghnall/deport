@@ -7,7 +7,7 @@ use crate::ipc::{ClientIpcStream, Request, Response};
 pub struct IpcClient;
 
 impl IpcClient {
-    pub async fn send_request<T>(mut stream: T, req: Request) -> io::Result<Response>
+    pub async fn send_request<T>(stream: &mut T, req: Request) -> io::Result<Response>
     where
         T: AsyncReadExt + AsyncWriteExt + Unpin,
     {

@@ -1,5 +1,4 @@
 use std::{
-    io::{self, Write as _},
     path::{Path},
 };
 
@@ -89,27 +88,4 @@ pub fn sanitize_rfc1035(hostname: &str) -> String {
     }
 
     result
-}
-
-pub fn prompt_input(prompt: &str) -> anyhow::Result<String> {
-    print!("{}", prompt);
-    io::stdout().flush()?;
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    Ok(input.trim().to_string())
-}
-
-pub fn confirm_action(prompt: &str) -> anyhow::Result<bool> {
-    loop {
-        print!("{} [y/N]: ", prompt);
-        io::stdout().flush()?;
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-
-        match input.trim().to_lowercase().as_str() {
-            "y" | "yes" => return Ok(true),
-            "n" | "no" | "" => return Ok(false),
-            _ => println!("Please enter 'y' or 'n'"),
-        }
-    }
 }

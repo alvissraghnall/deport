@@ -39,11 +39,6 @@ impl StartArgs {
 }
 
 impl StopArgs {
-    pub fn new () -> Self {
-        Self {
-            force: false,
-        }
-    }
 }
 
 pub fn handle_proxy_command(cmd: &ProxyCommands) -> Result<()> {
@@ -114,8 +109,8 @@ pub fn handle_proxy_command(cmd: &ProxyCommands) -> Result<()> {
                         let addr = r"\\.\pipe\deport";
 
                         match crate::ipc::client::IpcClient::connect(addr).await {
-                            Ok(stream) => {
-                                match crate::ipc::client::IpcClient::send_request(stream, crate::ipc::Request::KillDaemon).await {
+                            Ok(mut stream) => {
+                                match crate::ipc::client::IpcClient::send_request(&mut stream, crate::ipc::Request::KillDaemon).await {
                                     Ok(crate::ipc::Response::Ok { message }) => Ok(message),
                                     Ok(crate::ipc::Response::Error { message }) => Err(anyhow::anyhow!("Daemon error: {}", message)),
                                     _ => Err(anyhow::anyhow!("Unexpected response from daemon")),

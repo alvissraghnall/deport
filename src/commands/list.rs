@@ -1,23 +1,32 @@
-use crate::cli_utils::format_url;
+use crate::{APP_STATE, cli_utils::format_url, state::AppStateTrait};
+use anyhow::{Context, Result};
+use colored::Colorize;
 
-pub(crate) fn handle_list (routes_manager: &crate::routes::RouteManager, tls: bool) -> anyhow::Result<()> {
-    list_routes(routes_manager, tls);
-    Ok(())
-}
+pub(crate) async fn handle_list(addr: &str) -> Result<()> {
+    let mut client = crate::ipc::client::IpcClient::connect(addr)
+        .await
+        .context("Failed to connect to deport daemon. Is it running? Try `deport proxy start`.")?;
 
-fn list_routes(routes_manager: &crate::routes::RouteManager, tls: bool) {
+    let list_request = crate::ipc::Request::ListRoutes;
+    let response = crate::ipc::client::IpcClient::send_request(&mut client, list_request).await;
 
-    let list = routes_manager.list();
-    if list.is_empty() {
-        println!("No active routes found");
-        return;
-    }
+    let routes = match response {
+        Ok(crate::ipc::Response::Routes { routes }) => routes,
+        Ok(crate::ipc::Response::Error { message }) => {
+            println!("{}", format!("Error fetching routes: {}", message).bright_red());
+            return Ok(());
+        }
+        _ => {
+            println!("{}", "Unexpected response from daemon".bright_red());
+            return Ok(());
+        }
+    };
     println!("Active routes:");
-    for (hostname, route) in list {
-        let url = format_url(hostname.as_str(), route.port,  tls);
+    for (hostname, route) in routes {
+        let url = format_url(hostname.as_str(), route.port, true);
         let pid_str = format!("pid {}", route.pid);
         let label = if route.pid == 0 { "inactive" } else { pid_str.as_str() };
-        println!("{} -> {} ({})", url, format!("localhost:{}", route.port), label);
+        println!("{} -> {} ({})", url, format!("localhost:{}", APP_STATE.get_proxy_port()).green(), label);
     }
-
+    Ok(())
 }
