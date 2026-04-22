@@ -1,6 +1,7 @@
 use anyhow::{Result, bail};
 use clap::{Args, Subcommand};
 use colored::Colorize as _;
+use rkyv::{Deserialize, Serialize, Archive};
 
 use crate::daemon;
 use crate::{process_man::get_default_proxy_port, proxy::is_proxy_running, trust_ca::{is_ca_trusted}};
@@ -14,7 +15,7 @@ pub enum ProxyCommands {
     Stop(StopArgs),
 }
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Serialize, Deserialize, Archive)]
 pub struct StartArgs {
     #[arg(short, long)]
     port: Option<u16>,
@@ -35,6 +36,14 @@ impl StartArgs {
             port,
             use_https,
         }
+    }
+
+    pub fn get_port (&self) -> Option<u16> {
+        self.port
+    }
+
+    pub fn get_use_https (&self) -> Option<bool> {
+        self.use_https
     }
 }
 
