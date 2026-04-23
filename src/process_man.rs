@@ -273,7 +273,7 @@ impl Process {
                             SupervisorCommand::Kill => {
                                 #[cfg(unix)]
                                 {
-                                    // Unix: Kill the whole group to get grandchildren
+                                    // kill the whole group to get grandchildren
                                     use nix::sys::signal::{kill, Signal};
                                     use nix::unistd::Pid;
                                     // Negative PID means the process group

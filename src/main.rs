@@ -3,7 +3,7 @@ use std::{sync::{atomic::AtomicU16, Arc, LazyLock}};
 use dashmap::DashMap;
 use colored::Colorize;
 
-use crate::{commands::{Arguments, get::handle_get, list::handle_list, proxy::handle_proxy_command, run::handle_run, trust::handle_trust}, process_man::ProcessManager, routes::RouteManager, sni::load_ca, state::{ProxyState, app_data_dir, init_app_storage}};
+use crate::{commands::{Arguments, get::handle_get, list::handle_list, proxy::{handle_proxy_command, ProxyCommands, StartArgs}, run::handle_run, trust::handle_trust}, process_man::ProcessManager, proxy::is_proxy_running, routes::RouteManager, sni::load_ca, state::{ProxyState, app_data_dir, init_app_storage}};
 
 mod process_man;
 
@@ -60,6 +60,24 @@ fn main() -> anyhow::Result<()> {
             let _ = handle_proxy_command(&cmd);
         }
         commands::Commands::Run(mut run_args) => {
+            let is_running = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?
+                .block_on(is_proxy_running(run_args.get_proxy_port(), Some(true)));
+
+            if !is_running {
+                println!("{}", "Proxy not running, starting it...".yellow());
+                let proxy_start_args = StartArgs::new(run_args.get_proxy_port(), Some(true));
+                if let Err(e) = handle_proxy_command(&ProxyCommands::Start(proxy_start_args)) {
+                    eprintln!("{}", format!("Failed to start proxy: {}", e).red());
+                    std::process::exit(1);
+                }
+                println!("{}", "Proxy started. Waiting for it to initialize...".yellow());
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+            } else {
+                println!("{}", "Proxy is already running...".yellow());
+            }
+
             if let Err(e) = tokio::runtime::Runtime::new().unwrap().block_on(async {
                 handle_run(addr, &mut run_args).await
             }) {

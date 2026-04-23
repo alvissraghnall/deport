@@ -186,7 +186,7 @@ impl Request {
                         sudo_pfix, port_flag, sudo_pfix, port_flag
                     )
                     .blue();
-                    let stdout = format!("{}\n{}\n", first, second);
+                    let stdout = format!("\n{first}\n{second}\n");
                     return Response::Ok { message: stdout };
                 }
                 if proxy_port.is_some() && proxy_port.unwrap() < 1024 {
